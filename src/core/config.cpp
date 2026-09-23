@@ -68,6 +68,28 @@ bool ParseFrames(const std::string& value, int* out, std::string* err) {
     return true;
 }
 
+bool ParseIntStrict(const std::string& value, int* out, std::string* err, const char* name) {
+    if (value.empty()) {
+        *err = std::string(name) + " 不是数字";
+        return false;
+    }
+    for (char ch : value) {
+        if (ch < '0' || ch > '9') {
+            *err = std::string(name) + " 不是数字";
+            return false;
+        }
+    }
+    long long parsed = 0;
+    for (char ch : value) {
+        parsed = parsed * 10 + (ch - '0');
+        if (parsed > 1000000000LL) {
+            break;
+        }
+    }
+    *out = static_cast<int>(parsed);
+    return true;
+}
+
 }  // namespace
 
 bool LoadConfigFile(const std::string& path, CoreConfig* out, std::string* err) {
@@ -113,6 +135,28 @@ bool LoadConfigFile(const std::string& path, CoreConfig* out, std::string* err) 
         } else if (key == "log_path") {
             config.log_path = value;
             config.has_log_path = true;
+        } else if (key == "remote_port") {
+            int remote_port = 0;
+            if (!ParseIntStrict(value, &remote_port, err, "remote_port")) {
+                return false;
+            }
+            if (remote_port < 0 || remote_port > 65535) {
+                *err = "remote_port 超出范围: " + value;
+                return false;
+            }
+            config.remote_port = remote_port;
+            config.has_remote_port = true;
+        } else if (key == "remote_jpeg_quality") {
+            int remote_jpeg_quality = 80;
+            if (!ParseIntStrict(value, &remote_jpeg_quality, err, "remote_jpeg_quality")) {
+                return false;
+            }
+            if (remote_jpeg_quality < 1 || remote_jpeg_quality > 100) {
+                *err = "remote_jpeg_quality 超出范围: " + value;
+                return false;
+            }
+            config.remote_jpeg_quality = remote_jpeg_quality;
+            config.has_remote_jpeg_quality = true;
         } else if (key.rfind("capture_", 0) == 0 ||
                    key.rfind("policy_", 0) == 0 ||
                    key.rfind("input_", 0) == 0) {

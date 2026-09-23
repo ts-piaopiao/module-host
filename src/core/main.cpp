@@ -2,11 +2,13 @@
 
 #include "core_contract.h"
 #include "config.h"
+#include "remote_server.h"
 
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -193,6 +195,7 @@ bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string*
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    std::unique_ptr<RemoteServer> remote;
     bool show_help = false;
     bool show_version = false;
     std::string plugins_dir;
@@ -279,6 +282,15 @@ int main(int argc, char* argv[]) {
     }
 
     const int frame_count = config.has_frames ? config.frames : 5;
+
+    if (config.remote_port != 0) {
+        remote = std::make_unique<RemoteServer>();
+        if (!remote->Start(config.remote_port)) {
+            LogPrintf("[错误] 远程端口启动失败: %d\n", config.remote_port);
+            return 1;
+        }
+        LogPrintf("[内核] 远程监听: 端口 %d\n", config.remote_port);
+    }
 
     PluginState states[kDllCount] = {};
 
@@ -370,6 +382,12 @@ int main(int argc, char* argv[]) {
     return 0;
 #else
     LogPrintf("[内核] 加载成功\n");
+    if (config.remote_port != 0) {
+        LogPrintf("[内核] 远程模式驻留中，按 Ctrl+C 退出\n");
+        for (;;) {
+            Sleep(1000);
+        }
+    }
     Cleanup(states, kDllCount);
     return 0;
 #endif
