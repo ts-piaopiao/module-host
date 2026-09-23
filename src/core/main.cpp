@@ -73,6 +73,10 @@ void LogPrintf(const char* fmt, ...) {
     if (g_log_file.is_open()) {
         g_log_file.write(buffer, static_cast<std::streamsize>(len));
     }
+    std::fflush(stdout);
+    if (g_log_file.is_open()) {
+        g_log_file.flush();
+    }
 }
 
 std::string JoinPath(const std::string& dir, const char* name) {
