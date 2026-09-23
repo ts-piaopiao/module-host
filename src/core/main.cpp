@@ -395,6 +395,18 @@ int main(int argc, char* argv[]) {
         LogPrintf("[内核] 远程模式驻留中，按 Ctrl+C 退出\n");
         for (;;) {
             Sleep(1000);
+            const std::vector<core_action> events = remote->PopHumanEvents();
+            for (const core_action& act : events) {
+                const char* kind_name = "unknown";
+                switch (act.kind) {
+                case CORE_ACTION_KEY: kind_name = "KEY"; break;
+                case CORE_ACTION_POINTER_MOVE: kind_name = "MOVE"; break;
+                case CORE_ACTION_POINTER_BUTTON: kind_name = "BUTTON"; break;
+                default: break;
+                }
+                LogPrintf("[远程] kind=%s a=%d b=%d c=%d\n",
+                          kind_name, act.a, act.b, act.c);
+            }
         }
     }
     Cleanup(states, kDllCount);

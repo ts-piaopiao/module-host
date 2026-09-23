@@ -26,6 +26,13 @@ void WriteU32BE(uint8_t* buf, uint32_t v) {
     buf[3] = v & 0xFF;
 }
 
+uint32_t ReadU32BE(const uint8_t* buf) {
+    return (static_cast<uint32_t>(buf[0]) << 24) |
+           (static_cast<uint32_t>(buf[1]) << 16) |
+           (static_cast<uint32_t>(buf[2]) << 8) |
+           static_cast<uint32_t>(buf[3]);
+}
+
 struct FrameSnapshot {
     uint32_t width = 0;
     uint32_t height = 0;
@@ -44,6 +51,9 @@ struct RemoteServer::Impl {
 
     std::mutex frame_mutex;
     std::deque<FrameSnapshot> frame_queue;
+
+    std::mutex human_mutex;
+    std::deque<core_action> human_queue;
 
     int jpeg_quality = 80;
     JpegEncoder encoder;
@@ -108,6 +118,7 @@ struct RemoteServer::Impl {
             return;
         }
 
+        std::vector<uint8_t> rx_buf;
         auto last_heartbeat = std::chrono::steady_clock::now();
         uint8_t header[8];
         while (!stop_flag.load()) {
@@ -177,6 +188,63 @@ struct RemoteServer::Impl {
             }
             if (n == SOCKET_ERROR) {
                 return;
+            }
+
+            rx_buf.insert(rx_buf.end(), buf, buf + n);
+
+            while (rx_buf.size() >= 8) {
+                const uint32_t len = ReadU32BE(rx_buf.data());
+                if (len < 4 || len > 65536) {
+                    // 协议错误，清空缓冲，断开连接
+                    return;
+                }
+                if (rx_buf.size() < 4 + len) {
+                    break;  // 消息未完整，等下一次 recv
+                }
+                const uint32_t type = ReadU32BE(rx_buf.data() + 4);
+                const uint8_t* payload = rx_buf.data() + 8;
+                const uint32_t payload_len = len - 4;
+
+                core_action action;
+                bool valid = false;
+
+                if (type == 1 && payload_len == 8) {
+                    // 键盘：int32 key_code, int32 down
+                    const int32_t key = static_cast<int32_t>(ReadU32BE(payload));
+                    const int32_t down = static_cast<int32_t>(ReadU32BE(payload + 4));
+                    action.kind = CORE_ACTION_KEY;
+                    action.a = key;
+                    action.b = (down != 0) ? 1 : 0;
+                    action.c = 0;
+                    valid = true;
+                } else if (type == 2 && payload_len == 8) {
+                    // 鼠标移动：int32 dx, int32 dy
+                    const int32_t dx = static_cast<int32_t>(ReadU32BE(payload));
+                    const int32_t dy = static_cast<int32_t>(ReadU32BE(payload + 4));
+                    action.kind = CORE_ACTION_POINTER_MOVE;
+                    action.a = dx;
+                    action.b = dy;
+                    action.c = 0;
+                    valid = true;
+                } else if (type == 3 && payload_len == 8) {
+                    // 鼠标按键：int32 button_id, int32 down
+                    const int32_t btn = static_cast<int32_t>(ReadU32BE(payload));
+                    const int32_t down = static_cast<int32_t>(ReadU32BE(payload + 4));
+                    action.kind = CORE_ACTION_POINTER_BUTTON;
+                    action.a = btn;
+                    action.b = (down != 0) ? 1 : 0;
+                    action.c = 0;
+                    valid = true;
+                }
+                // 其他类型（例如心跳）直接忽略，不报错
+
+                if (valid) {
+                    std::lock_guard<std::mutex> lk(human_mutex);
+                    human_queue.push_back(action);
+                }
+
+                // 消费掉这条消息
+                rx_buf.erase(rx_buf.begin(), rx_buf.begin() + 4 + len);
             }
         }
     }
@@ -251,6 +319,16 @@ void RemoteServer::Stop() {
         impl_->wsa_started = false;
     }
     impl_->started = false;
+}
+
+std::vector<core_action> RemoteServer::PopHumanEvents() {
+    std::vector<core_action> result;
+    std::lock_guard<std::mutex> lk(impl_->human_mutex);
+    while (!impl_->human_queue.empty()) {
+        result.push_back(impl_->human_queue.front());
+        impl_->human_queue.pop_front();
+    }
+    return result;
 }
 
 void RemoteServer::PushFrame(const uint8_t* bgra, uint32_t width, uint32_t height) {
