@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(BUILD_STAGE2_PLUGINS "Build stage2 plugins" OFF)
 
-add_executable(module_host_core src/core/main.cpp)
+add_executable(module_host_core src/core/main.cpp src/core/config.cpp)
 set_target_properties(module_host_core PROPERTIES OUTPUT_NAME core)
 target_include_directories(module_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(module_host_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)

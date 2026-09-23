@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include "core_contract.h"
+#include "config.h"
 
 #include <cstdio>
 #include <cstring>
@@ -173,11 +174,18 @@ int main(int argc, char* argv[]) {
     bool show_help = false;
     bool show_version = false;
     std::string plugins_dir;
+    std::string config_path;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             show_help = true;
         } else if (std::strcmp(argv[i], "--version") == 0 || std::strcmp(argv[i], "-v") == 0) {
             show_version = true;
+        } else if (std::strcmp(argv[i], "--config") == 0) {
+            if (i + 1 >= argc) {
+                std::printf("[错误] 缺失参数: --config\n");
+                return 1;
+            }
+            config_path = argv[++i];
         } else if (std::strcmp(argv[i], "--plugins-dir") == 0) {
             if (i + 1 >= argc) {
                 std::printf("[错误] 缺失参数: --plugins-dir\n");
@@ -192,6 +200,7 @@ int main(int argc, char* argv[]) {
         std::printf("用法: core.exe --plugins-dir <目录>\n");
         std::printf("选项:\n");
         std::printf("  --plugins-dir <目录>   指定插件目录\n");
+        std::printf("  --config <路径>       指定配置文件\n");
         std::printf("  --help, -h            显示本帮助\n");
         std::printf("  --version, -v         显示版本\n");
         return 0;
@@ -205,18 +214,35 @@ int main(int argc, char* argv[]) {
 #else
         std::printf("当前构建: STAGE2=OFF\n");
 #endif
+        std::printf("构建配置: --config 可用\n");
         return 0;
     }
 
-    if (plugins_dir.empty()) {
+    CoreConfig config;
+    if (!config_path.empty()) {
+        std::string config_err;
+        if (!LoadConfigFile(config_path, &config, &config_err)) {
+            std::printf("[错误] 配置无效: %s\n", config_err.c_str());
+            return 1;
+        }
+    }
+
+    std::string effective_plugins_dir = plugins_dir;
+    if (effective_plugins_dir.empty() && config.has_plugins_dir) {
+        effective_plugins_dir = config.plugins_dir;
+    }
+
+    if (effective_plugins_dir.empty()) {
         std::printf("[错误] 缺失参数: --plugins-dir\n");
         return 1;
     }
 
+    const int frame_count = config.has_frames ? config.frames : 5;
+
     PluginState states[kDllCount] = {};
 
     for (int i = 0; i < kDllCount; ++i) {
-        const std::string path = JoinPath(plugins_dir, kDllNames[i]);
+        const std::string path = JoinPath(effective_plugins_dir, kDllNames[i]);
         states[i].module = LoadLibraryA(path.c_str());
         if (states[i].module == nullptr) {
             std::printf("[错误] 缺失 DLL: %s\n", kDllNames[i]);
@@ -261,7 +287,7 @@ int main(int argc, char* argv[]) {
     core_intent intent = {};
     core_decision decision = {};
 
-    for (int i = 1; i <= 5; ++i) {
+    for (int i = 1; i <= frame_count; ++i) {
         std::printf("[帧 %d] 起始\n", i);
 
         if (states[0].capture(&frame) != CORE_OK) {
@@ -296,7 +322,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::printf("[内核] 5 帧完成\n");
+    std::printf("[内核] %d 帧完成\n", frame_count);
     Cleanup(states, kDllCount);
     return 0;
 #else
