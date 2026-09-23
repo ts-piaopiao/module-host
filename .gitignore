@@ -8,3 +8,5 @@ build/
 *.exp
 .vs/
 out/
+experiments/**/out_*.bmp
+experiments/**/*.bmp

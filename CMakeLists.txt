@@ -197,4 +197,16 @@ if(BUILD_STAGE2_PLUGINS)
         OUTPUT_NAME input_plugin
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/execute_fail
     )
+
+    add_library(stage2_real_capture SHARED src/real/real_capture.cpp)
+    target_compile_definitions(stage2_real_capture PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(stage2_real_capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(stage2_real_capture PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(stage2_real_capture PROPERTIES
+        OUTPUT_NAME capture_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_real
+    )
+    target_link_libraries(stage2_real_capture PRIVATE
+        mfplat.lib mf.lib mfreadwrite.lib mfuuid.lib ole32.lib
+    )
 endif()

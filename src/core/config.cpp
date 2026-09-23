@@ -113,6 +113,10 @@ bool LoadConfigFile(const std::string& path, CoreConfig* out, std::string* err) 
         } else if (key == "log_path") {
             config.log_path = value;
             config.has_log_path = true;
+        } else if (key.rfind("capture_", 0) == 0 ||
+                   key.rfind("policy_", 0) == 0 ||
+                   key.rfind("input_", 0) == 0) {
+            continue;
         } else {
             *err = "未知配置项: " + key;
             return false;

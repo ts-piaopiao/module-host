@@ -249,6 +249,17 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    std::string raw_config;
+    if (!config_path.empty()) {
+        std::ifstream raw_in(config_path, std::ios::in | std::ios::binary);
+        if (!raw_in.is_open()) {
+            LogPrintf("[错误] 读取配置失败: %s\n", config_path.c_str());
+            return 1;
+        }
+        raw_config.assign(std::istreambuf_iterator<char>(raw_in),
+                          std::istreambuf_iterator<char>());
+    }
+
     if (config.has_log_path && !config.log_path.empty()) {
         g_log_file.open(config.log_path, std::ios::out | std::ios::trunc);
         if (!g_log_file.is_open()) {
@@ -299,7 +310,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        if (init_fn(CORE_ABI_VERSION, "") != CORE_OK) {
+        if (init_fn(CORE_ABI_VERSION, raw_config.c_str()) != CORE_OK) {
             LogPrintf("[错误] 初始化失败: %s\n", name.c_str());
             Cleanup(states, kDllCount);
             return 1;
