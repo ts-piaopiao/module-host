@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('bad_plugins', 'stubs', 'all')]
+    [ValidateSet('bad_plugins', 'stubs', 'runtime_errors', 'all')]
     [string]$Suite = 'bad_plugins',
     [string]$Config = 'Release',
     [string]$CorePath = '',
@@ -48,6 +48,11 @@ $expectations = [ordered]@{
     'meta_kind_mismatch_capture'   = @{ Keyword = '元数据无效: kind 不匹配'; ExitZero = $false }
     'init_fail_capture'            = @{ Keyword = '初始化失败'; ExitZero = $false }
     'stubs'                        = @{ Keyword = '加载成功'; ExitZero = $true }
+    'capture_fail'                 = @{ Keyword = '捕获失败'; ExitZero = $false }
+    'decide_fail'                  = @{ Keyword = '决策失败'; ExitZero = $false }
+    'decide_over_count'            = @{ Keyword = 'out_count 违约'; ExitZero = $false }
+    'decide_empty'                 = @{ Keyword = '无意图'; ExitZero = $true }
+    'execute_fail'                 = @{ Keyword = '执行失败'; ExitZero = $false }
 }
 
 function Invoke-CoreScenario {
@@ -130,6 +135,18 @@ if ($Suite -eq 'stubs') {
         exit 1
     }
     $scenarios += @{ Name = 'stubs'; PluginsDir = $stubsPluginsDir }
+}
+
+if ($Suite -eq 'runtime_errors' -or $Suite -eq 'all') {
+    $runtimeRoot = Join-Path $acceptanceFull 'runtime_errors'
+    if (-not (Test-Path -LiteralPath $runtimeRoot)) {
+        Write-Output ("FAIL: runtime_errors root not found: {0}" -f $runtimeRoot)
+        exit 1
+    }
+    $dirs = Get-ChildItem -LiteralPath $runtimeRoot -Directory | Sort-Object Name
+    foreach ($dir in $dirs) {
+        $scenarios += @{ Name = $dir.Name; PluginsDir = $dir.FullName }
+    }
 }
 
 $passed = 0

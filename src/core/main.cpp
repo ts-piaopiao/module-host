@@ -44,6 +44,9 @@ using PluginExecuteFn = core_error (*)(const core_decision*);
 struct PluginState {
     HMODULE module = nullptr;
     PluginReleaseFn release = nullptr;
+    PluginCaptureFn capture = nullptr;
+    PluginDecideFn decide = nullptr;
+    PluginExecuteFn execute = nullptr;
     bool inited = false;
 };
 
@@ -203,9 +206,9 @@ int main(int argc, char* argv[]) {
         const PluginMetaFn meta_fn = reinterpret_cast<PluginMetaFn>(symbols[0]);
         const PluginInitFn init_fn = reinterpret_cast<PluginInitFn>(symbols[1]);
         const PluginReleaseFn release_fn = reinterpret_cast<PluginReleaseFn>(symbols[2]);
-        (void)symbols[3];
-        (void)symbols[4];
-        (void)symbols[5];
+        const PluginCaptureFn capture_fn = reinterpret_cast<PluginCaptureFn>(symbols[3]);
+        const PluginDecideFn decide_fn = reinterpret_cast<PluginDecideFn>(symbols[4]);
+        const PluginExecuteFn execute_fn = reinterpret_cast<PluginExecuteFn>(symbols[5]);
 
         std::string name;
         if (!ParseAndCheckMeta(meta_fn(), kExpectedKinds[i], &name)) {
@@ -220,10 +223,58 @@ int main(int argc, char* argv[]) {
         }
 
         states[i].release = release_fn;
+        states[i].capture = capture_fn;
+        states[i].decide = decide_fn;
+        states[i].execute = execute_fn;
         states[i].inited = true;
     }
 
+#if defined(BUILD_STAGE2_PLUGINS) && BUILD_STAGE2_PLUGINS
+    core_frame frame = {};
+    core_intent intent = {};
+    core_decision decision = {};
+
+    for (int i = 1; i <= 5; ++i) {
+        std::printf("[帧 %d] 起始\n", i);
+
+        if (states[0].capture(&frame) != CORE_OK) {
+            std::printf("[错误] 捕获失败\n");
+            Cleanup(states, kDllCount);
+            return 1;
+        }
+
+        if (states[1].decide(&intent, &decision) != CORE_OK) {
+            std::printf("[错误] 决策失败\n");
+            Cleanup(states, kDllCount);
+            return 1;
+        }
+
+        if (decision.out_count > CORE_DECISION_CAPACITY) {
+            std::printf("[错误] out_count 违约: %u > %d\n",
+                        decision.out_count, CORE_DECISION_CAPACITY);
+            Cleanup(states, kDllCount);
+            return 1;
+        }
+
+        if (decision.out_count == 0) {
+            std::printf("[内核] 无意图\n");
+        }
+
+        for (uint32_t item = 0; item < decision.out_count; ++item) {
+            if (states[2].execute(&decision) != CORE_OK) {
+                std::printf("[错误] 执行失败\n");
+                Cleanup(states, kDllCount);
+                return 1;
+            }
+        }
+    }
+
+    std::printf("[内核] 5 帧完成\n");
+    Cleanup(states, kDllCount);
+    return 0;
+#else
     std::printf("[内核] 加载成功\n");
     Cleanup(states, kDllCount);
     return 0;
+#endif
 }

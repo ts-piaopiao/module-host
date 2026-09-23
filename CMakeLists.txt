@@ -13,6 +13,9 @@ add_executable(module_host_core src/core/main.cpp)
 set_target_properties(module_host_core PROPERTIES OUTPUT_NAME core)
 target_include_directories(module_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(module_host_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+if(BUILD_STAGE2_PLUGINS)
+    target_compile_definitions(module_host_core PRIVATE BUILD_STAGE2_PLUGINS=1)
+endif()
 
 add_library(stage1_stub_capture SHARED src/stubs/stub_capture.cpp)
 target_compile_definitions(stage1_stub_capture PRIVATE CORE_BUILDING_PLUGIN)
@@ -121,3 +124,77 @@ set_target_properties(bad_init_fail_capture PROPERTIES
     OUTPUT_NAME capture_plugin
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/bad_plugins/init_fail_capture
 )
+
+if(BUILD_STAGE2_PLUGINS)
+    add_library(stage2_normal_capture SHARED src/normal/normal_capture.cpp)
+    target_compile_definitions(stage2_normal_capture PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(stage2_normal_capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(stage2_normal_capture PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(stage2_normal_capture PROPERTIES
+        OUTPUT_NAME capture_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins
+    )
+
+    add_library(stage2_normal_policy SHARED src/normal/normal_policy.cpp)
+    target_compile_definitions(stage2_normal_policy PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(stage2_normal_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(stage2_normal_policy PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(stage2_normal_policy PROPERTIES
+        OUTPUT_NAME policy_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins
+    )
+
+    add_library(stage2_normal_input SHARED src/normal/normal_input.cpp)
+    target_compile_definitions(stage2_normal_input PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(stage2_normal_input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(stage2_normal_input PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(stage2_normal_input PROPERTIES
+        OUTPUT_NAME input_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins
+    )
+
+    add_library(rt_capture_fail SHARED src/runtime_errors/capture_fail.cpp)
+    target_compile_definitions(rt_capture_fail PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(rt_capture_fail PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(rt_capture_fail PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(rt_capture_fail PROPERTIES
+        OUTPUT_NAME capture_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/capture_fail
+    )
+
+    add_library(rt_decide_fail SHARED src/runtime_errors/decide_fail.cpp)
+    target_compile_definitions(rt_decide_fail PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(rt_decide_fail PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(rt_decide_fail PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(rt_decide_fail PROPERTIES
+        OUTPUT_NAME policy_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/decide_fail
+    )
+
+    add_library(rt_decide_over_count SHARED src/runtime_errors/decide_over_count.cpp)
+    target_compile_definitions(rt_decide_over_count PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(rt_decide_over_count PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(rt_decide_over_count PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(rt_decide_over_count PROPERTIES
+        OUTPUT_NAME policy_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/decide_over_count
+    )
+
+    add_library(rt_decide_empty SHARED src/runtime_errors/decide_empty.cpp)
+    target_compile_definitions(rt_decide_empty PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(rt_decide_empty PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(rt_decide_empty PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(rt_decide_empty PROPERTIES
+        OUTPUT_NAME policy_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/decide_empty
+    )
+
+    add_library(rt_execute_fail SHARED src/runtime_errors/execute_fail.cpp)
+    target_compile_definitions(rt_execute_fail PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(rt_execute_fail PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(rt_execute_fail PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    set_target_properties(rt_execute_fail PROPERTIES
+        OUTPUT_NAME input_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/execute_fail
+    )
+endif()
