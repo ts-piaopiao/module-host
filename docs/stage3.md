@@ -148,3 +148,45 @@ bad_plugins 里 abi_mismatch_capture 的 ABI 段要改成 "3"，保持不匹配�
 ## 七、一句话原则
 
 先扩契约，再重跑全部旧验收，全绿后才接真实硬件。
+
+## 八、实现状态（截至 stage3c）
+
+### 已完成
+
+- ABI=2 契约扩展：core_frame.pts_ms、core_action、core_decision.actions、
+  core_execute_result、plugin_init(host_abi, config)、
+  plugin_execute(decision, out)
+- 阶段 0/1/2 全部回归通过（13/13 + 6/6）
+- 真实 capture 插件：src/real/real_capture.cpp，从采集卡 Media Foundation 拉帧，
+  输出 1920x1080@30 BGRA8，帧缓冲在插件内部复用，
+  ReadSample 遇 STREAMTICK 重试（1 秒超时）
+- 真实 input 插件：src/real/real_input.cpp，走串口 115200 8N1，
+  遍历 core_decision.actions 翻译成 mk.* 文本命令发出，
+  串口在 init 打开、release 关闭，不在 execute 里开关
+- 测试 policy：src/real/test_policy.cpp，每帧产出"按 I 一次"两个动作
+- 真实插件输出到 build\Release\plugins_real\，
+  与假插件 plugins\ 分离，不影响无硬件环境下的 CI
+- 插件配置通过宿主 --config 文件原文透传，前缀键 capture_ / policy_ / input_
+  由宿主放行、插件自行解释
+
+### 未完成
+
+- 真实 policy（YOLO 推理），src/real/test_policy.cpp 只是占位
+- 远程画面推流
+- 人工操作与自动决策的仲裁（多动作来源优先级）
+
+### 与设计文档的偏差
+
+1. 插件配置不走 section，走全局 key=value 透传。
+   理由：只有一个真实插件时 section 增加复杂度，收益不明确。
+   将来若需要，再走契约变更。
+2. 真实插件输出到 plugins_real\ 而不是覆盖 plugins\。
+   理由：保留假插件用于无硬件 CI，避免 CI 依赖采集卡和串口。
+3. plugin_execute 每次决策只调用一次，input 插件内部遍历 actions。
+   这条是设计文档 2.5 节补充的内容，实现遵循了这条。
+
+### 已知未验证项
+
+- capture 长时间运行（>10 分钟）的内存与帧率稳定性
+- input 高频发送（>30 次/秒）时串口是否丢包
+- 采集卡被其他程序占用时的错误恢复
