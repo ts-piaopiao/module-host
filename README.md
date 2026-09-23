@@ -100,6 +100,51 @@ scripts\run_acceptance.ps1 -Stage stage2
 
 ---
 
+## 阶段 3：真实硬件集成
+
+### 目标
+
+把假插件替换成真实硬件插件：采集卡拉帧、串口发键鼠。
+契约从 ABI=1 升到 ABI=2，新增 core_action、core_execute_result 等。
+
+### 真实插件目录
+
+真实插件输出到 build\Release\plugins_real\：
+- capture_plugin.dll（从采集卡拉帧，1920x1080@30 BGRA8）
+- input_plugin.dll（走串口 115200 8N1，发 mk.* 文本命令）
+- policy_plugin.dll（当前为测试桩，产出"按 I"两个动作）
+
+### 运行命令
+
+    core.exe --config build\Release\real_test.ini
+
+real_test.ini 示例：
+
+    plugins_dir = D:\dev\module-host\build\Release\plugins_real
+    frames = 5
+    capture_device = 0
+    capture_width = 1920
+    capture_height = 1080
+    capture_fps = 30
+    capture_format = auto
+    input_port = COM6
+    input_baud = 115200
+
+### 前置条件
+
+- 采集卡插在 USB 口，被系统识别为视频采集设备
+- 串口设备插在 COM6（或配置里指定的端口），未被子程序占用
+- 真实插件只在 BUILD_STAGE2_PLUGINS=ON 时构建
+- 假插件（plugins/）仍然存在，用于无硬件环境下的回归
+
+### 不在本阶段范围
+
+- 真实 policy（YOLO 推理，独立任务）
+- 远程画面推流
+- 人工操作与自动决策的仲裁
+
+---
+
 ## core.exe 命令行
 
 ### 用法
@@ -139,6 +184,13 @@ scripts\run_acceptance.ps1 -Stage stage2
 | `plugins_dir` | 字符串 | 插件目录，命令行 `--plugins-dir` 优先 |
 | `frames` | 整数 1..100 | 阶段 2 的帧数，默认 5 |
 | `log_path` | 字符串 | 日志文件路径，同时写到 stdout 和该文件 |
+| `capture_device` | 整数 | 采集卡设备索引，默认 0 |
+| `capture_width` | 整数 | 期望宽度，默认 1920 |
+| `capture_height` | 整数 | 期望高度，默认 1080 |
+| `capture_fps` | 整数 | 期望帧率，默认 30 |
+| `capture_format` | 字符串 | yuy2 / mjpg / nv12 / auto，默认 auto |
+| `input_port` | 字符串 | 串口号，如 COM6，默认 COM6 |
+| `input_baud` | 整数 | 波特率，默认 115200 |
 
 规则：
 - 以 `capture_` / `policy_` / `input_` 开头的键由对应插件解释，宿主只透传不校验。
