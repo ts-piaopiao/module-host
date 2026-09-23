@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -196,6 +197,32 @@ bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string*
     return true;
 }
 
+bool IsHumanWindowActive(const std::set<int32_t>& pressed_keys,
+                          const std::set<int32_t>& pressed_buttons,
+                          ULONGLONG t_last_event) {
+    if (!pressed_keys.empty() || !pressed_buttons.empty()) {
+        return true;
+    }
+    if (t_last_event == 0) {
+        return false;
+    }
+    return (GetTickCount64() - t_last_event) < 500;
+}
+
+// 把 events 组装成 core_decision。
+// 超过 CORE_DECISION_CAPACITY 的部分丢弃。
+void BuildHumanDecision(const std::vector<core_action>& events,
+                        core_decision* out) {
+    out->out_count = 0;
+    for (const core_action& act : events) {
+        if (out->out_count >= CORE_DECISION_CAPACITY) {
+            break;
+        }
+        out->actions[out->out_count] = act;
+        out->out_count++;
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -342,7 +369,11 @@ int main(int argc, char* argv[]) {
 #if defined(BUILD_STAGE2_PLUGINS) && BUILD_STAGE2_PLUGINS
     core_frame frame = {};
     core_intent intent = {};
-    core_decision decision = {};
+    core_decision decision_policy = {};
+
+    std::set<int32_t> pressed_keys;
+    std::set<int32_t> pressed_buttons;
+    ULONGLONG t_last_event = 0;
 
     for (int i = 1; i <= frame_count; ++i) {
         LogPrintf("[帧 %d] 起始\n", i);
@@ -352,37 +383,67 @@ int main(int argc, char* argv[]) {
             Cleanup(states, kDllCount);
             return 1;
         }
-        if (remote && frame.data != nullptr &&
-            frame.width > 0 && frame.height > 0 &&
+
+        if (remote && frame.data != nullptr && frame.width > 0 && frame.height > 0 &&
             frame.format == CORE_PIXEL_FORMAT_BGRA8) {
             remote->PushFrame(frame.data, frame.width, frame.height);
         }
 
-        if (states[1].decide(&intent, &decision) != CORE_OK) {
+        if (states[1].decide(&intent, &decision_policy) != CORE_OK) {
             LogPrintf("[错误] 决策失败\n");
             Cleanup(states, kDllCount);
             return 1;
         }
-
-        if (decision.out_count > CORE_DECISION_CAPACITY) {
+        if (decision_policy.out_count > CORE_DECISION_CAPACITY) {
             LogPrintf("[错误] out_count 违约: %u > %d\n",
-                      decision.out_count, CORE_DECISION_CAPACITY);
+                      decision_policy.out_count, CORE_DECISION_CAPACITY);
             Cleanup(states, kDllCount);
             return 1;
         }
 
-        if (decision.out_count == 0) {
+        std::vector<core_action> events;
+        if (remote) {
+            events = remote->PopHumanEvents();
+        }
+        for (const core_action& act : events) {
+            t_last_event = GetTickCount64();
+            if (act.kind == CORE_ACTION_KEY) {
+                if (act.b == 1) {
+                    pressed_keys.insert(act.a);
+                } else {
+                    pressed_keys.erase(act.a);
+                }
+            } else if (act.kind == CORE_ACTION_POINTER_BUTTON) {
+                if (act.b == 1) {
+                    pressed_buttons.insert(act.a);
+                } else {
+                    pressed_buttons.erase(act.a);
+                }
+            }
+        }
+
+        const bool human_active = IsHumanWindowActive(pressed_keys, pressed_buttons, t_last_event);
+
+        core_decision final_decision = {};
+        if (human_active) {
+            BuildHumanDecision(events, &final_decision);
+            if (!events.empty()) {
+                LogPrintf("[内核] 人工覆盖: %d 个动作\n", static_cast<int>(events.size()));
+            }
+        } else {
+            final_decision = decision_policy;
+        }
+
+        if (final_decision.out_count == 0) {
             LogPrintf("[内核] 无意图\n");
         }
 
         core_execute_result exec_result = {};
-        if (decision.out_count > 0) {
-            if (states[2].execute(&decision, &exec_result) != CORE_OK ||
-                exec_result.status != CORE_OK) {
-                LogPrintf("[错误] 执行失败\n");
-                Cleanup(states, kDllCount);
-                return 1;
-            }
+        if (states[2].execute(&final_decision, &exec_result) != CORE_OK ||
+            exec_result.status != CORE_OK) {
+            LogPrintf("[错误] 执行失败\n");
+            Cleanup(states, kDllCount);
+            return 1;
         }
     }
 

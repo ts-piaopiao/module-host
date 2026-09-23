@@ -121,17 +121,33 @@ struct RemoteServer::Impl {
         std::vector<uint8_t> rx_buf;
         auto last_heartbeat = std::chrono::steady_clock::now();
         uint8_t header[8];
+
+        int sndbuf = 1 << 20;
+        setsockopt(client_socket, SOL_SOCKET, SO_SNDBUF,
+                   reinterpret_cast<const char*>(&sndbuf), sizeof(sndbuf));
+
         while (!stop_flag.load()) {
             const auto now = std::chrono::steady_clock::now();
             if (now - last_heartbeat >= std::chrono::seconds(2)) {
-                WriteU32BE(header, 4);
-                WriteU32BE(header + 4, 2);
-                if (send(client_socket, reinterpret_cast<const char*>(header), 8, 0) == SOCKET_ERROR) {
-                    return;
+                fd_set hb_fds;
+                FD_ZERO(&hb_fds);
+                FD_SET(client_socket, &hb_fds);
+                timeval tv_hb;
+                tv_hb.tv_sec = 0;
+                tv_hb.tv_usec = 0;
+                if (select(0, nullptr, &hb_fds, nullptr, &tv_hb) > 0 &&
+                    FD_ISSET(client_socket, &hb_fds)) {
+                    WriteU32BE(header, 4);
+                    WriteU32BE(header + 4, 2);
+                    if (send(client_socket, reinterpret_cast<const char*>(header), 8, 0) == SOCKET_ERROR) {
+                        return;
+                    }
                 }
                 last_heartbeat = now;
             }
 
+            // 先收后发：有帧时先查可写，可写才编码+send，不可写则丢帧，
+            // 避免阻塞 send 卡住循环导致 recv 轮不到。
             {
                 FrameSnapshot snap;
                 bool has_frame = false;
@@ -144,27 +160,37 @@ struct RemoteServer::Impl {
                     }
                 }
                 if (has_frame) {
-                    std::vector<uint8_t> jpeg;
-                    if (encoder.Encode(snap.bgra.data(), snap.width, snap.height,
-                                       jpeg_quality, &jpeg) && !jpeg.empty()) {
-                        uint32_t payload_len = 4 + static_cast<uint32_t>(jpeg.size());
-                        std::vector<uint8_t> header_and_payload;
-                        header_and_payload.resize(4 + payload_len);
-                        WriteU32BE(header_and_payload.data(), payload_len);
-                        WriteU32BE(header_and_payload.data() + 4, 1);
-                        std::memcpy(header_and_payload.data() + 8, jpeg.data(), jpeg.size());
-                        const int total = static_cast<int>(header_and_payload.size());
-                        int sent = 0;
-                        while (sent < total) {
-                            const int n = send(client_socket,
-                                               reinterpret_cast<const char*>(header_and_payload.data() + sent),
-                                               total - sent, 0);
-                            if (n == SOCKET_ERROR || n == 0) {
-                                return;
+                    fd_set write_fds;
+                    FD_ZERO(&write_fds);
+                    FD_SET(client_socket, &write_fds);
+                    timeval tv_zero;
+                    tv_zero.tv_sec = 0;
+                    tv_zero.tv_usec = 0;
+                    const int writable = select(0, nullptr, &write_fds, nullptr, &tv_zero);
+                    if (writable > 0 && FD_ISSET(client_socket, &write_fds)) {
+                        std::vector<uint8_t> jpeg;
+                        if (encoder.Encode(snap.bgra.data(), snap.width, snap.height,
+                                           jpeg_quality, &jpeg) && !jpeg.empty()) {
+                            uint32_t payload_len = 4 + static_cast<uint32_t>(jpeg.size());
+                            std::vector<uint8_t> header_and_payload;
+                            header_and_payload.resize(4 + payload_len);
+                            WriteU32BE(header_and_payload.data(), payload_len);
+                            WriteU32BE(header_and_payload.data() + 4, 1);
+                            std::memcpy(header_and_payload.data() + 8, jpeg.data(), jpeg.size());
+                            const int total = static_cast<int>(header_and_payload.size());
+                            int sent = 0;
+                            while (sent < total) {
+                                const int n = send(client_socket,
+                                                   reinterpret_cast<const char*>(header_and_payload.data() + sent),
+                                                   total - sent, 0);
+                                if (n == SOCKET_ERROR || n == 0) {
+                                    return;
+                                }
+                                sent += n;
                             }
-                            sent += n;
                         }
                     }
+                    // writable <= 0：丢弃这帧，不编码，不 send
                 }
             }
 
