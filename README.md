@@ -100,6 +100,62 @@ scripts\run_acceptance.ps1 -Stage stage2
 
 ---
 
+## core.exe 命令行
+
+### 用法
+
+    core.exe --plugins-dir <目录> [--config <路径>]
+    core.exe --help
+    core.exe --version
+
+### 选项
+
+| 选项 | 说明 |
+|---|---|
+| `--plugins-dir <目录>` | 指定插件目录，优先级高于配置文件 |
+| `--config <路径>` | 指定配置文件 |
+| `--help, -h` | 显示帮助并退出，优先级最高 |
+| `--version, -v` | 显示版本并退出，优先级最高 |
+
+### 优先级
+
+1. `--help` / `--version` 出现即早退，不读配置文件，不解析插件目录。
+2. `--plugins-dir` 命令行覆盖配置文件中的 `plugins_dir`。
+3. 都没有时打印 `[错误] 缺失参数: --plugins-dir` 并退出非 0。
+
+### 配置文件格式
+
+极简 key = value 行格式，UTF-8：
+
+    # 以 # 开头为整行注释
+    plugins_dir = D:\path\to\plugins
+    frames = 5
+    log_path = D:\path\to\core.log
+
+支持的键：
+
+| 键 | 类型 | 说明 |
+|---|---|---|
+| `plugins_dir` | 字符串 | 插件目录，命令行 `--plugins-dir` 优先 |
+| `frames` | 整数 1..100 | 阶段 2 的帧数，默认 5 |
+| `log_path` | 字符串 | 日志文件路径，同时写到 stdout 和该文件 |
+
+规则：
+- 未知键报 `[错误] 配置无效: 未知配置项: <key>` 并退出 1。
+- 无 `=` 的行报 `[错误] 配置无效: 配置行格式错误` 并退出 1。
+- `frames` 非数字报 `[错误] 配置无效: frames 不是数字` 并退出 1。
+- `frames` 越界报 `[错误] 配置无效: frames 超出范围: <值>` 并退出 1。
+- `log_path` 打不开时报 `[错误] 日志打开失败: <path>` 并退出 1。
+- 未提供 `--config` 时不读任何配置文件，行为与之前完全一致。
+
+### 日志
+
+- `log_path` 生效时，所有 `[内核]` / `[帧 N]` / `[错误]` 输出同时写到 stdout 和日志文件。
+- `--help` / `--version` 的输出不写日志。
+- 未提供 `log_path` 时不写日志。
+
+---
+
 ## 错误消息模板清单
 
 与项目文档一致，错误消息模板固定如下：
