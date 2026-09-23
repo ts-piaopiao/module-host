@@ -170,15 +170,42 @@ bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string*
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    bool show_help = false;
+    bool show_version = false;
     std::string plugins_dir;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--plugins-dir") == 0) {
+        if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
+            show_help = true;
+        } else if (std::strcmp(argv[i], "--version") == 0 || std::strcmp(argv[i], "-v") == 0) {
+            show_version = true;
+        } else if (std::strcmp(argv[i], "--plugins-dir") == 0) {
             if (i + 1 >= argc) {
                 std::printf("[错误] 缺失参数: --plugins-dir\n");
                 return 1;
             }
             plugins_dir = argv[++i];
         }
+    }
+
+    if (show_help) {
+        std::printf("module-host core\n");
+        std::printf("用法: core.exe --plugins-dir <目录>\n");
+        std::printf("选项:\n");
+        std::printf("  --plugins-dir <目录>   指定插件目录\n");
+        std::printf("  --help, -h            显示本帮助\n");
+        std::printf("  --version, -v         显示版本\n");
+        return 0;
+    }
+
+    if (show_version) {
+        std::printf("module-host core\n");
+        std::printf("ABI 版本: %d\n", CORE_ABI_VERSION);
+#if defined(BUILD_STAGE2_PLUGINS) && BUILD_STAGE2_PLUGINS
+        std::printf("当前构建: STAGE2=ON\n");
+#else
+        std::printf("当前构建: STAGE2=OFF\n");
+#endif
+        return 0;
     }
 
     if (plugins_dir.empty()) {
