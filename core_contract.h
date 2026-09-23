@@ -1,4 +1,4 @@
-#ifndef CORE_CONTRACT_H
+﻿#ifndef CORE_CONTRACT_H
 #define CORE_CONTRACT_H
 
 #include <stddef.h>
@@ -26,7 +26,7 @@
 #define CORE_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 #endif
 
-#define CORE_ABI_VERSION              1
+#define CORE_ABI_VERSION              2
 #define CORE_PLUGIN_META_NAME_MAX     63
 #define CORE_PLUGIN_META_VERSION_MAX  31
 #define CORE_PLUGIN_META_NAME_BUF     64
@@ -55,6 +55,10 @@ typedef enum core_pixel_format {
     CORE_PIXEL_FORMAT_BGRA8 = 0
 } core_pixel_format;
 
+// data 指针由 capture 插件持有。
+// 有效期到下一次 plugin_capture 调用前。
+// 宿主不得跨帧保存 data 指针。
+// 宿主不得修改 data 指向的像素。
 typedef struct core_frame {
     uint32_t width;
     uint32_t height;
@@ -62,18 +66,40 @@ typedef struct core_frame {
     core_pixel_format format;
     const uint8_t* data;
     size_t size;
+    int64_t pts_ms;
 } core_frame;
 
 typedef struct core_intent {
     int32_t param1;
 } core_intent;
 
+typedef enum core_action_kind {
+    CORE_ACTION_NONE = 0,
+    CORE_ACTION_POINTER_MOVE = 1,
+    CORE_ACTION_POINTER_BUTTON = 2,
+    CORE_ACTION_KEY = 3,
+    CORE_ACTION_WAIT = 4,
+    CORE_ACTION_CUSTOM = 5
+} core_action_kind;
+
+typedef struct core_action {
+    core_action_kind kind;
+    int32_t a;
+    int32_t b;
+    int32_t c;
+} core_action;
+
 typedef struct core_decision {
-    int32_t items[CORE_DECISION_CAPACITY];
+    core_action actions[CORE_DECISION_CAPACITY];
     uint32_t out_count;
 } core_decision;
 
-CORE_STATIC_ASSERT(CORE_ABI_VERSION == 1, "CORE_ABI_VERSION must be 1");
+typedef struct core_execute_result {
+    core_error status;
+    int32_t detail;
+} core_execute_result;
+
+CORE_STATIC_ASSERT(CORE_ABI_VERSION == 2, "CORE_ABI_VERSION must be 2");
 CORE_STATIC_ASSERT(CORE_DECISION_CAPACITY == 8, "CORE_DECISION_CAPACITY must be 8");
 CORE_STATIC_ASSERT(CORE_PARAM1 == 87, "CORE_PARAM1 must be 87");
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_NAME_MAX == 63, "CORE_PLUGIN_META_NAME_MAX must be 63");
@@ -83,17 +109,17 @@ CORE_STATIC_ASSERT(CORE_PLUGIN_META_NAME_BUF == CORE_PLUGIN_META_NAME_MAX + 1,
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_VERSION_BUF == CORE_PLUGIN_META_VERSION_MAX + 1,
                    "CORE_PLUGIN_META_VERSION_BUF must be VERSION_MAX + 1");
 CORE_STATIC_ASSERT(CORE_OK == 0, "CORE_OK must be 0");
-CORE_STATIC_ASSERT(sizeof(((core_decision*)0)->items) / sizeof(int32_t) == 8,
-                   "core_decision.items must have 8 elements");
+CORE_STATIC_ASSERT(sizeof(((core_decision*)0)->actions) / sizeof(core_action) == 8,
+                   "core_decision.actions must have 8 elements");
 
 CORE_BEGIN_DECLS
 
 CORE_API const char* plugin_meta(void);
-CORE_API core_error plugin_init(uint32_t host_abi);
+CORE_API core_error plugin_init(uint32_t host_abi, const char* config);
 CORE_API core_error plugin_release(void);
 CORE_API core_error plugin_capture(core_frame* out);
 CORE_API core_error plugin_decide(const core_intent* intent, core_decision* out);
-CORE_API core_error plugin_execute(const core_decision* decision);
+CORE_API core_error plugin_execute(const core_decision* decision, core_execute_result* out);
 
 CORE_END_DECLS
 

@@ -1,10 +1,11 @@
 #include "core_contract.h"
 
 const char* plugin_meta(void) {
-    return "fake_input|1.0.0|1|input";
+    return "fake_input|1.0.0|2|input";
 }
 
-core_error plugin_init(uint32_t host_abi) {
+core_error plugin_init(uint32_t host_abi, const char* config) {
+    (void)config;
     if (host_abi == CORE_ABI_VERSION) {
         return CORE_OK;
     }
@@ -16,7 +17,9 @@ core_error plugin_release(void) {
 }
 
 core_error plugin_capture(core_frame* out) {
-    (void)out;
+    if (out != nullptr) {
+        out->pts_ms = 0;
+    }
     return CORE_OK;
 }
 

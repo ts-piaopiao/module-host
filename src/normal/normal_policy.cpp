@@ -1,10 +1,11 @@
 #include "core_contract.h"
 
 const char* plugin_meta(void) {
-    return "fake_policy|1.0.0|1|policy";
+    return "fake_policy|1.0.0|2|policy";
 }
 
-core_error plugin_init(uint32_t host_abi) {
+core_error plugin_init(uint32_t host_abi, const char* config) {
+    (void)config;
     if (host_abi == CORE_ABI_VERSION) {
         return CORE_OK;
     }
@@ -25,11 +26,18 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
         return CORE_ERR_DECIDE;
     }
     out->out_count = 1;
-    out->items[0] = CORE_PARAM1;
+    out->actions[0].kind = CORE_ACTION_NONE;
+    out->actions[0].a = CORE_PARAM1;
+    out->actions[0].b = 0;
+    out->actions[0].c = 0;
     return CORE_OK;
 }
 
-core_error plugin_execute(const core_decision* decision) {
+core_error plugin_execute(const core_decision* decision, core_execute_result* out) {
     (void)decision;
+    if (out != nullptr) {
+        out->status = CORE_OK;
+        out->detail = 0;
+    }
     return CORE_OK;
 }

@@ -40,11 +40,11 @@ const char* const kSymbolNames[] = {
 constexpr int kSymbolCount = 6;
 
 using PluginMetaFn = const char* (*)(void);
-using PluginInitFn = core_error (*)(uint32_t);
+using PluginInitFn = core_error (*)(uint32_t, const char*);
 using PluginReleaseFn = core_error (*)(void);
 using PluginCaptureFn = core_error (*)(core_frame*);
 using PluginDecideFn = core_error (*)(const core_intent*, core_decision*);
-using PluginExecuteFn = core_error (*)(const core_decision*);
+using PluginExecuteFn = core_error (*)(const core_decision*, core_execute_result*);
 
 struct PluginState {
     HMODULE module = nullptr;
@@ -299,7 +299,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        if (init_fn(CORE_ABI_VERSION) != CORE_OK) {
+        if (init_fn(CORE_ABI_VERSION, "") != CORE_OK) {
             LogPrintf("[错误] 初始化失败: %s\n", name.c_str());
             Cleanup(states, kDllCount);
             return 1;
@@ -343,8 +343,10 @@ int main(int argc, char* argv[]) {
             LogPrintf("[内核] 无意图\n");
         }
 
-        for (uint32_t item = 0; item < decision.out_count; ++item) {
-            if (states[2].execute(&decision) != CORE_OK) {
+        core_execute_result exec_result = {};
+        if (decision.out_count > 0) {
+            if (states[2].execute(&decision, &exec_result) != CORE_OK ||
+                exec_result.status != CORE_OK) {
                 LogPrintf("[错误] 执行失败\n");
                 Cleanup(states, kDllCount);
                 return 1;
