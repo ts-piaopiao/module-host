@@ -289,7 +289,7 @@ int main(int argc, char* argv[]) {
 
     if (config.remote_port != 0) {
         remote = std::make_unique<RemoteServer>();
-        if (!remote->Start(config.remote_port)) {
+        if (!remote->Start(config.remote_port, config.remote_jpeg_quality)) {
             LogPrintf("[错误] 远程端口启动失败: %d\n", config.remote_port);
             return 1;
         }
@@ -351,6 +351,11 @@ int main(int argc, char* argv[]) {
             LogPrintf("[错误] 捕获失败\n");
             Cleanup(states, kDllCount);
             return 1;
+        }
+        if (remote && frame.data != nullptr &&
+            frame.width > 0 && frame.height > 0 &&
+            frame.format == CORE_PIXEL_FORMAT_BGRA8) {
+            remote->PushFrame(frame.data, frame.width, frame.height);
         }
 
         if (states[1].decide(&intent, &decision) != CORE_OK) {

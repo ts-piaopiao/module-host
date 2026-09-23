@@ -3,13 +3,19 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <objbase.h>
 
 #include "remote_server.h"
+#include "jpeg_encoder.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
+#include <deque>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -19,6 +25,12 @@ void WriteU32BE(uint8_t* buf, uint32_t v) {
     buf[2] = (v >> 8) & 0xFF;
     buf[3] = v & 0xFF;
 }
+
+struct FrameSnapshot {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> bgra;
+};
 
 }  // namespace
 
@@ -30,7 +42,21 @@ struct RemoteServer::Impl {
     bool wsa_started = false;
     bool started = false;
 
+    std::mutex frame_mutex;
+    std::deque<FrameSnapshot> frame_queue;
+
+    int jpeg_quality = 80;
+    JpegEncoder encoder;
+
     void Loop() {
+        bool com_ok = false;
+        const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (hr == S_OK || hr == S_FALSE || hr == RPC_E_CHANGED_MODE) {
+            com_ok = (hr == S_OK);
+        } else {
+            return;
+        }
+
         while (!stop_flag.load()) {
             fd_set read_fds;
             FD_ZERO(&read_fds);
@@ -62,6 +88,7 @@ struct RemoteServer::Impl {
                 client_socket = INVALID_SOCKET;
             }
         }
+
         if (listen_socket != INVALID_SOCKET) {
             closesocket(listen_socket);
             listen_socket = INVALID_SOCKET;
@@ -70,9 +97,17 @@ struct RemoteServer::Impl {
             closesocket(client_socket);
             client_socket = INVALID_SOCKET;
         }
+
+        if (com_ok) {
+            CoUninitialize();
+        }
     }
 
     void ServeClient() {
+        if (!encoder.Init()) {
+            return;
+        }
+
         auto last_heartbeat = std::chrono::steady_clock::now();
         uint8_t header[8];
         while (!stop_flag.load()) {
@@ -84,6 +119,42 @@ struct RemoteServer::Impl {
                     return;
                 }
                 last_heartbeat = now;
+            }
+
+            {
+                FrameSnapshot snap;
+                bool has_frame = false;
+                {
+                    std::lock_guard<std::mutex> lk(frame_mutex);
+                    if (!frame_queue.empty()) {
+                        snap = std::move(frame_queue.front());
+                        frame_queue.pop_front();
+                        has_frame = true;
+                    }
+                }
+                if (has_frame) {
+                    std::vector<uint8_t> jpeg;
+                    if (encoder.Encode(snap.bgra.data(), snap.width, snap.height,
+                                       jpeg_quality, &jpeg) && !jpeg.empty()) {
+                        uint32_t payload_len = 4 + static_cast<uint32_t>(jpeg.size());
+                        std::vector<uint8_t> header_and_payload;
+                        header_and_payload.resize(4 + payload_len);
+                        WriteU32BE(header_and_payload.data(), payload_len);
+                        WriteU32BE(header_and_payload.data() + 4, 1);
+                        std::memcpy(header_and_payload.data() + 8, jpeg.data(), jpeg.size());
+                        const int total = static_cast<int>(header_and_payload.size());
+                        int sent = 0;
+                        while (sent < total) {
+                            const int n = send(client_socket,
+                                               reinterpret_cast<const char*>(header_and_payload.data() + sent),
+                                               total - sent, 0);
+                            if (n == SOCKET_ERROR || n == 0) {
+                                return;
+                            }
+                            sent += n;
+                        }
+                    }
+                }
             }
 
             fd_set read_fds;
@@ -119,10 +190,12 @@ RemoteServer::~RemoteServer() {
     impl_ = nullptr;
 }
 
-bool RemoteServer::Start(int port) {
+bool RemoteServer::Start(int port, int jpeg_quality) {
     if (impl_->started) {
         return false;
     }
+    impl_->jpeg_quality = jpeg_quality;
+
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
         return false;
@@ -178,4 +251,22 @@ void RemoteServer::Stop() {
         impl_->wsa_started = false;
     }
     impl_->started = false;
+}
+
+void RemoteServer::PushFrame(const uint8_t* bgra, uint32_t width, uint32_t height) {
+    if (impl_->stop_flag.load()) {
+        return;
+    }
+    if (bgra == nullptr || width == 0 || height == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(impl_->frame_mutex);
+    if (impl_->frame_queue.size() >= 2) {
+        impl_->frame_queue.pop_front();
+    }
+    FrameSnapshot snap;
+    snap.width = width;
+    snap.height = height;
+    snap.bgra.assign(bgra, bgra + static_cast<size_t>(width) * height * 4);
+    impl_->frame_queue.push_back(std::move(snap));
 }
