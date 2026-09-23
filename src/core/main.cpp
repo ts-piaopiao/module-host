@@ -3,12 +3,16 @@
 #include "core_contract.h"
 #include "config.h"
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
 namespace {
+
+std::ofstream g_log_file;
 
 const char* const kDllNames[] = {
     "capture_plugin.dll",
@@ -50,6 +54,24 @@ struct PluginState {
     PluginExecuteFn execute = nullptr;
     bool inited = false;
 };
+
+void LogPrintf(const char* fmt, ...) {
+    char buffer[2048];
+    va_list args;
+    va_start(args, fmt);
+    const int written = std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    if (written <= 0) {
+        return;
+    }
+    const size_t len = (static_cast<size_t>(written) < sizeof(buffer))
+                           ? static_cast<size_t>(written)
+                           : sizeof(buffer) - 1;
+    std::fwrite(buffer, 1, len, stdout);
+    if (g_log_file.is_open()) {
+        g_log_file.write(buffer, static_cast<std::streamsize>(len));
+    }
+}
 
 std::string JoinPath(const std::string& dir, const char* name) {
     std::string path = dir;
@@ -114,7 +136,7 @@ bool LoadSymbols(HMODULE module, FARPROC* symbols) {
     for (int i = 0; i < kSymbolCount; ++i) {
         symbols[i] = GetProcAddress(module, kSymbolNames[i]);
         if (symbols[i] == nullptr) {
-            std::printf("[错误] 缺失符号: %s\n", kSymbolNames[i]);
+            LogPrintf("[错误] 缺失符号: %s\n", kSymbolNames[i]);
             return false;
         }
     }
@@ -123,13 +145,13 @@ bool LoadSymbols(HMODULE module, FARPROC* symbols) {
 
 bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string* out_name) {
     if (meta == nullptr) {
-        std::printf("[错误] 元数据无效: NULL\n");
+        LogPrintf("[错误] 元数据无效: NULL\n");
         return false;
     }
 
     const std::vector<std::string> parts = SplitByPipe(std::string(meta));
     if (parts.size() != 4) {
-        std::printf("[错误] 元数据无效: 段数不是 4\n");
+        LogPrintf("[错误] 元数据无效: 段数不是 4\n");
         return false;
     }
 
@@ -139,28 +161,28 @@ bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string*
     const std::string& kind = parts[3];
 
     if (name.size() > CORE_PLUGIN_META_NAME_MAX || name.find(CORE_PLUGIN_META_SEP) != std::string::npos) {
-        std::printf("[错误] 元数据无效: name 非法\n");
+        LogPrintf("[错误] 元数据无效: name 非法\n");
         return false;
     }
 
     if (version.size() > CORE_PLUGIN_META_VERSION_MAX || version.find(CORE_PLUGIN_META_SEP) != std::string::npos) {
-        std::printf("[错误] 元数据无效: version 非法\n");
+        LogPrintf("[错误] 元数据无效: version 非法\n");
         return false;
     }
 
     if (!AllDigits(abi)) {
-        std::printf("[错误] 元数据无效: ABI 非数字\n");
+        LogPrintf("[错误] 元数据无效: ABI 非数字\n");
         return false;
     }
 
     const unsigned long long abi_value = ParseDecimal(abi);
     if (abi_value != static_cast<unsigned long long>(CORE_ABI_VERSION)) {
-        std::printf("[错误] ABI 不匹配: 期望 %d 实际 %llu\n", CORE_ABI_VERSION, abi_value);
+        LogPrintf("[错误] ABI 不匹配: 期望 %d 实际 %llu\n", CORE_ABI_VERSION, abi_value);
         return false;
     }
 
     if (kind != expected_kind) {
-        std::printf("[错误] 元数据无效: kind 不匹配\n");
+        LogPrintf("[错误] 元数据无效: kind 不匹配\n");
         return false;
     }
 
@@ -182,13 +204,13 @@ int main(int argc, char* argv[]) {
             show_version = true;
         } else if (std::strcmp(argv[i], "--config") == 0) {
             if (i + 1 >= argc) {
-                std::printf("[错误] 缺失参数: --config\n");
+                LogPrintf("[错误] 缺失参数: --config\n");
                 return 1;
             }
             config_path = argv[++i];
         } else if (std::strcmp(argv[i], "--plugins-dir") == 0) {
             if (i + 1 >= argc) {
-                std::printf("[错误] 缺失参数: --plugins-dir\n");
+                LogPrintf("[错误] 缺失参数: --plugins-dir\n");
                 return 1;
             }
             plugins_dir = argv[++i];
@@ -222,7 +244,15 @@ int main(int argc, char* argv[]) {
     if (!config_path.empty()) {
         std::string config_err;
         if (!LoadConfigFile(config_path, &config, &config_err)) {
-            std::printf("[错误] 配置无效: %s\n", config_err.c_str());
+            LogPrintf("[错误] 配置无效: %s\n", config_err.c_str());
+            return 1;
+        }
+    }
+
+    if (config.has_log_path && !config.log_path.empty()) {
+        g_log_file.open(config.log_path, std::ios::out | std::ios::trunc);
+        if (!g_log_file.is_open()) {
+            std::printf("[错误] 日志打开失败: %s\n", config.log_path.c_str());
             return 1;
         }
     }
@@ -233,7 +263,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (effective_plugins_dir.empty()) {
-        std::printf("[错误] 缺失参数: --plugins-dir\n");
+        LogPrintf("[错误] 缺失参数: --plugins-dir\n");
         return 1;
     }
 
@@ -245,7 +275,7 @@ int main(int argc, char* argv[]) {
         const std::string path = JoinPath(effective_plugins_dir, kDllNames[i]);
         states[i].module = LoadLibraryA(path.c_str());
         if (states[i].module == nullptr) {
-            std::printf("[错误] 缺失 DLL: %s\n", kDllNames[i]);
+            LogPrintf("[错误] 缺失 DLL: %s\n", kDllNames[i]);
             Cleanup(states, kDllCount);
             return 1;
         }
@@ -270,7 +300,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (init_fn(CORE_ABI_VERSION) != CORE_OK) {
-            std::printf("[错误] 初始化失败: %s\n", name.c_str());
+            LogPrintf("[错误] 初始化失败: %s\n", name.c_str());
             Cleanup(states, kDllCount);
             return 1;
         }
@@ -288,45 +318,45 @@ int main(int argc, char* argv[]) {
     core_decision decision = {};
 
     for (int i = 1; i <= frame_count; ++i) {
-        std::printf("[帧 %d] 起始\n", i);
+        LogPrintf("[帧 %d] 起始\n", i);
 
         if (states[0].capture(&frame) != CORE_OK) {
-            std::printf("[错误] 捕获失败\n");
+            LogPrintf("[错误] 捕获失败\n");
             Cleanup(states, kDllCount);
             return 1;
         }
 
         if (states[1].decide(&intent, &decision) != CORE_OK) {
-            std::printf("[错误] 决策失败\n");
+            LogPrintf("[错误] 决策失败\n");
             Cleanup(states, kDllCount);
             return 1;
         }
 
         if (decision.out_count > CORE_DECISION_CAPACITY) {
-            std::printf("[错误] out_count 违约: %u > %d\n",
-                        decision.out_count, CORE_DECISION_CAPACITY);
+            LogPrintf("[错误] out_count 违约: %u > %d\n",
+                      decision.out_count, CORE_DECISION_CAPACITY);
             Cleanup(states, kDllCount);
             return 1;
         }
 
         if (decision.out_count == 0) {
-            std::printf("[内核] 无意图\n");
+            LogPrintf("[内核] 无意图\n");
         }
 
         for (uint32_t item = 0; item < decision.out_count; ++item) {
             if (states[2].execute(&decision) != CORE_OK) {
-                std::printf("[错误] 执行失败\n");
+                LogPrintf("[错误] 执行失败\n");
                 Cleanup(states, kDllCount);
                 return 1;
             }
         }
     }
 
-    std::printf("[内核] %d 帧完成\n", frame_count);
+    LogPrintf("[内核] %d 帧完成\n", frame_count);
     Cleanup(states, kDllCount);
     return 0;
 #else
-    std::printf("[内核] 加载成功\n");
+    LogPrintf("[内核] 加载成功\n");
     Cleanup(states, kDllCount);
     return 0;
 #endif
