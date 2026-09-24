@@ -14,6 +14,9 @@ public:
     // 每帧调用。输入 policy 产出的检测结果，输出决策。
     void Update(const core_detections* dets, core_decision* out);
 
+    // 获取当前锁定的 me 位置和有效性
+    bool GetMeLock(float* fx, float* fy) const;
+
 private:
     struct Impl;
     Impl* impl_;

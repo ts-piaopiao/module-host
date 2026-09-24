@@ -1,5 +1,7 @@
 #include "decider.h"
 
+#include "combat.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -118,6 +120,8 @@ int AnalyzeMoves(const VerifySample& t0, const VerifySample& t1, const VerifySam
 }  // namespace
 
 struct Decider::Impl {
+    Combat combat;
+
     int lock_id = -1;
     float lock_fx = 0.5f;
     float lock_fy = 0.72f;
@@ -147,12 +151,28 @@ Decider::~Decider() {
     impl_ = nullptr;
 }
 
+bool Decider::GetMeLock(float* fx, float* fy) const {
+    if (impl_->lock_id < 0) return false;
+    *fx = impl_->lock_fx;
+    *fy = impl_->lock_fy;
+    return true;
+}
+
 void Decider::Update(const core_detections* dets, core_decision* out) {
     if (out == nullptr) return;
     out->out_count = 0;
     if (dets == nullptr) return;
 
     const unsigned long long now = NowMs();
+
+    auto finish = [&]() {
+        if (impl_->lock_id >= 0) {
+            impl_->combat.Update(true, impl_->lock_fx, impl_->lock_fy, dets, out);
+        } else {
+            impl_->combat.Update(false, 0, 0, dets, out);
+        }
+        std::fprintf(stdout, "[decider] decision: out_count=%u\n", out->out_count);
+    };
 
     // ===== 验证状态机 =====
     if (impl_->verify_state != VerifyState::IDLE) {
@@ -284,7 +304,7 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
     // 无锁
     if (impl_->lock_id < 0) {
         if (cand_count == 0) {
-            std::fprintf(stdout, "[decider] decision: out_count=0\n");
+            finish();
             return;
         }
         if (cand_count == 1) {
@@ -294,7 +314,7 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             impl_->lost_since = 0;
             std::fprintf(stdout, "[decider] me_lock: id=%d fx=%.3f fy=%.3f (unique)\n",
                          impl_->lock_id, impl_->lock_fx, impl_->lock_fy);
-            std::fprintf(stdout, "[decider] decision: out_count=0\n");
+            finish();
             return;
         }
         // 多候选，触发验证
@@ -305,7 +325,7 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
         CaptureSample(dets, &impl_->sample_t0);
         std::fprintf(stdout, "[decider] 触发验证: 多候选 %u, 右移 %llu ms\n",
                      cand_count, (unsigned long long)impl_->press_duration);
-        std::fprintf(stdout, "[decider] decision: out_count=0\n");
+        finish();
         return;
     }
 
@@ -325,7 +345,7 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             impl_->lost_since = 0;
             std::fprintf(stdout, "[decider] me_lock: id=%d fx=%.3f fy=%.3f\n",
                          impl_->lock_id, impl_->lock_fx, impl_->lock_fy);
-            std::fprintf(stdout, "[decider] decision: out_count=0\n");
+            finish();
             return;
         }
     }
@@ -341,5 +361,5 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
         std::fprintf(stdout, "[decider] me_lock: id=%d held (lost %llu ms)\n",
                      impl_->lock_id, elapsed);
     }
-    std::fprintf(stdout, "[decider] decision: out_count=0\n");
+    finish();
 }
