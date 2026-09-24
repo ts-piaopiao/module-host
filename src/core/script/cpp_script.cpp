@@ -3,13 +3,71 @@
 #include <cmath>
 #include <cstdio>
 
+namespace {
+
+constexpr float kPriorX = 0.5f;
+constexpr float kPriorY = 0.72f;
+
+bool SelectMe(const core_detections* dets, float* out_fx, float* out_fy) {
+    if (dets == nullptr) return false;
+    bool found = false;
+    float best = 1e9f;
+    for (uint32_t i = 0; i < dets->count; ++i) {
+        const auto& d = dets->items[i];
+        if (d.cls != 0) continue;
+        const float fx = d.cx;
+        const float fy = d.cy + d.h * 0.5f;
+        const float dx = fx - kPriorX;
+        const float dy = fy - kPriorY;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist < best) {
+            best = dist;
+            *out_fx = fx;
+            *out_fy = fy;
+            found = true;
+        }
+    }
+    return found;
+}
+
+bool SelectTarget(const core_detections* dets, float me_fx,
+                  float* out_cx, float* out_cy) {
+    if (dets == nullptr) return false;
+    bool found = false;
+    float best = 1e9f;
+    for (uint32_t i = 0; i < dets->count; ++i) {
+        const auto& d = dets->items[i];
+        if (d.cls != 1) continue;
+        const float dist = std::fabs(d.cx - me_fx);
+        if (dist < best) {
+            best = dist;
+            *out_cx = d.cx;
+            *out_cy = d.cy;
+            found = true;
+        }
+    }
+    return found;
+}
+
+}  // namespace
+
 struct CppScript::Impl {
     uint64_t last_log_frame = 0;
     bool inited = false;
+
+    enum class State { IDLE, CHASE };
+    State state = State::IDLE;
+
+    bool me_valid = false;
+    float me_fx = 0.0f;
+    float me_fy = 0.0f;
+
+    bool has_target = false;
+    float target_cx = 0.0f;
+    float target_cy = 0.0f;
+
     int active_key = 0;
-    int pending_release = 0;
     int last_pressed = 0;
-    uint64_t last_switch_frame = 0;
 };
 
 CppScript::CppScript() : impl_(new Impl()) {}
@@ -23,82 +81,59 @@ bool CppScript::Init(const std::string& config) {
 }
 
 void CppScript::OnFrame(const ScriptWorld& world) {
-    if (impl_->last_switch_frame == 0) {
-        impl_->last_switch_frame = world.frame_index;
-        impl_->active_key = 0x27;
-        std::printf("[script] 初始方向: 右\n");
-        std::fflush(stdout);
+    impl_->me_valid = SelectMe(world.dets, &impl_->me_fx, &impl_->me_fy);
+
+    if (impl_->me_valid) {
+        impl_->has_target = SelectTarget(world.dets, impl_->me_fx,
+                                         &impl_->target_cx, &impl_->target_cy);
+    } else {
+        impl_->has_target = false;
     }
 
-    if (world.frame_index - impl_->last_switch_frame >= 120) {
-        impl_->last_switch_frame = world.frame_index;
-        impl_->pending_release = impl_->active_key;
-        impl_->active_key = (impl_->active_key == 0x27) ? 0x25 : 0x27;
-        std::printf("[script] frame=%llu 切方向: %s\n",
-                    (unsigned long long)world.frame_index,
-                    impl_->active_key == 0x27 ? "右" : "左");
-        std::fflush(stdout);
+    if (!impl_->me_valid || !impl_->has_target) {
+        impl_->state = Impl::State::IDLE;
+    } else {
+        impl_->state = Impl::State::CHASE;
     }
 
-    if (world.frame_index - impl_->last_log_frame < 30) return;
-    impl_->last_log_frame = world.frame_index;
-
-    if (world.dets == nullptr) {
-        std::printf("[script] frame=%llu dets=nullptr\n",
-                    (unsigned long long)world.frame_index);
-        std::fflush(stdout);
-        return;
-    }
-
-    uint32_t total = world.dets->count;
-    uint32_t cls0_n = 0;
-    uint32_t cls1_n = 0;
-    int nearest_idx = -1;
-    float nearest_dist = 1e9f;
-    for (uint32_t i = 0; i < total; ++i) {
-        const auto& d = world.dets->items[i];
-        if (d.cls == 0) cls0_n++;
-        else if (d.cls == 1) {
-            cls1_n++;
-            const float dx = d.cx - world.me_fx;
-            const float dist = std::fabs(dx);
-            if (dist < nearest_dist) {
-                nearest_dist = dist;
-                nearest_idx = (int)i;
-            }
+    if (impl_->state == Impl::State::IDLE) {
+        impl_->active_key = 0;
+    } else {
+        const float dx = impl_->target_cx - impl_->me_fx;
+        if (std::fabs(dx) < 0.02f) {
+            impl_->active_key = 0;
+        } else {
+            impl_->active_key = (dx > 0) ? 0x27 : 0x25;
         }
     }
 
-    if (nearest_idx >= 0) {
-        const auto& d = world.dets->items[nearest_idx];
-        std::printf("[script] frame=%llu total=%u cls0=%u cls1=%u nearest(cx=%.3f cy=%.3f conf=%.3f)\n",
+    if (world.frame_index - impl_->last_log_frame >= 30) {
+        impl_->last_log_frame = world.frame_index;
+        const char* state_str = (impl_->state == Impl::State::IDLE) ? "IDLE" : "CHASE";
+        std::printf("[script] frame=%llu state=%s me_valid=%d me=(%.3f,%.3f) target=%d target_cx=%.3f key=0x%02X\n",
                     (unsigned long long)world.frame_index,
-                    total, cls0_n, cls1_n,
-                    d.cx, d.cy, d.conf);
-    } else {
-        std::printf("[script] frame=%llu total=%u cls0=%u cls1=0 无怪\n",
-                    (unsigned long long)world.frame_index,
-                    total, cls0_n);
+                    state_str,
+                    impl_->me_valid ? 1 : 0,
+                    impl_->me_fx, impl_->me_fy,
+                    impl_->has_target ? 1 : 0,
+                    impl_->target_cx,
+                    impl_->active_key);
+        std::fflush(stdout);
     }
-    std::fflush(stdout);
 }
 
 void CppScript::GetDecision(core_decision* out) {
     out->out_count = 0;
 
-    if (impl_->pending_release != 0) {
-        if (out->out_count < CORE_DECISION_CAPACITY) {
+    if (impl_->active_key != impl_->last_pressed) {
+        if (impl_->last_pressed != 0 && out->out_count < CORE_DECISION_CAPACITY) {
             out->actions[out->out_count].kind = CORE_ACTION_KEY;
-            out->actions[out->out_count].a = impl_->pending_release;
+            out->actions[out->out_count].a = impl_->last_pressed;
             out->actions[out->out_count].b = 0;
             out->actions[out->out_count].c = 0;
             out->out_count++;
         }
-        impl_->pending_release = 0;
-    }
-
-    if (impl_->active_key != impl_->last_pressed) {
-        if (out->out_count < CORE_DECISION_CAPACITY) {
+        if (impl_->active_key != 0 && out->out_count < CORE_DECISION_CAPACITY) {
             out->actions[out->out_count].kind = CORE_ACTION_KEY;
             out->actions[out->out_count].a = impl_->active_key;
             out->actions[out->out_count].b = 1;
