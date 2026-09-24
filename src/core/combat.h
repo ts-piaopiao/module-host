@@ -16,6 +16,10 @@ public:
     void Update(bool me_valid, float me_fx, float me_fy,
                 const core_detections* dets, core_decision* out);
 
+    // 输出所有已按键的 release 动作到 out，并清空内部状态。
+    // 用于异常路径（me 丢失、验证开始）。
+    void ReleaseAll(core_decision* out);
+
 private:
     struct Impl;
     Impl* impl_;
