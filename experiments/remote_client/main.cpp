@@ -47,14 +47,16 @@ UINT g_frame_h = 0;
 std::atomic<int> g_fps{0};
 std::atomic<int> g_fps_count{0};
 
-int g_last_x = 0;
-int g_last_y = 0;
+int g_center_screen_x = 0;
+int g_center_screen_y = 0;
 
 HDC g_mem_dc = nullptr;
 HBITMAP g_mem_bmp = nullptr;
 HBITMAP g_mem_old_bmp = nullptr;
 int g_mem_w = 0;
 int g_mem_h = 0;
+
+bool g_control_mode = false;
 
 void WriteU32BE(uint8_t* p, uint32_t v) {
     p[0] = static_cast<uint8_t>((v >> 24) & 0xFF);
@@ -265,9 +267,39 @@ std::string g_title_host_port;
 void UpdateTitleFps(HWND hwnd) {
     const int fps = g_fps.load(std::memory_order_relaxed);
     char title[256];
-    std::snprintf(title, sizeof(title), "remote_client - %s - %d fps",
-                  g_title_host_port.c_str(), fps);
-    SetWindowTextA(hwnd, title);
+    if (g_control_mode) {
+        std::snprintf(title, sizeof(title), "remote_client - %s - [控制中] - %d fps",
+                      g_title_host_port.c_str(), fps);
+    } else {
+        std::snprintf(title, sizeof(title), "remote_client - %s - %d fps",
+                      g_title_host_port.c_str(), fps);
+    }
+    wchar_t wtitle[256];
+    MultiByteToWideChar(CP_UTF8, 0, title, -1, wtitle, 256);
+    SetWindowTextW(hwnd, wtitle);
+}
+
+void RecomputeCenter(HWND hwnd) {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    POINT center = { (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 };
+    ClientToScreen(hwnd, &center);
+    g_center_screen_x = center.x;
+    g_center_screen_y = center.y;
+}
+
+void SetControlMode(HWND hwnd, bool enable) {
+    g_control_mode = enable;
+    if (enable) {
+        SetCapture(hwnd);
+        RecomputeCenter(hwnd);
+        SetCursorPos(g_center_screen_x, g_center_screen_y);
+        ShowCursor(FALSE);
+    } else {
+        ReleaseCapture();
+        ShowCursor(TRUE);
+    }
+    UpdateTitleFps(hwnd);
 }
 
 void EnsureBackbuffer(HDC hdc, int w, int h) {
@@ -347,47 +379,93 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_SIZE:
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
-    case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE) {
-            PostQuitMessage(0);
+    case WM_KEYDOWN: {
+        if (wParam == VK_F12) {
+            if (!(lParam & 0x40000000)) {
+                SetControlMode(hwnd, !g_control_mode);
+            }
             return 0;
         }
-        if (!(lParam & 0x40000000)) { // ignore repeat
+        if (wParam == VK_ESCAPE) {
+            if (g_control_mode) {
+                if (!(lParam & 0x40000000)) {
+                    SendKeyboard(VK_ESCAPE, 1);
+                }
+            } else {
+                PostQuitMessage(0);
+            }
+            return 0;
+        }
+        if (!g_control_mode) {
+            return 0;
+        }
+        if (!(lParam & 0x40000000)) {
             SendKeyboard(static_cast<uint32_t>(wParam), 1);
         }
         return 0;
-    case WM_KEYUP:
+    }
+    case WM_KEYUP: {
+        if (wParam == VK_F12) {
+            return 0;
+        }
+        if (wParam == VK_ESCAPE) {
+            if (g_control_mode) {
+                SendKeyboard(VK_ESCAPE, 0);
+            }
+            return 0;
+        }
+        if (!g_control_mode) {
+            return 0;
+        }
         SendKeyboard(static_cast<uint32_t>(wParam), 0);
         return 0;
+    }
     case WM_MOUSEMOVE: {
+        if (!g_control_mode) {
+            return 0;
+        }
         const int x = GET_X_LPARAM(lParam);
         const int y = GET_Y_LPARAM(lParam);
-        const int dx = x - g_last_x;
-        const int dy = y - g_last_y;
-        g_last_x = x;
-        g_last_y = y;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        const int cx = (rc.right - rc.left) / 2;
+        const int cy = (rc.bottom - rc.top) / 2;
+        const int dx = x - cx;
+        const int dy = y - cy;
         if (dx != 0 || dy != 0) {
             SendMouseMove(dx, dy);
+            SetCursorPos(g_center_screen_x, g_center_screen_y);
         }
         return 0;
     }
     case WM_LBUTTONDOWN:
-        SendMouseButton(1, 1);
+        if (g_control_mode) SendMouseButton(1, 1);
         return 0;
     case WM_LBUTTONUP:
-        SendMouseButton(1, 0);
+        if (g_control_mode) SendMouseButton(1, 0);
         return 0;
     case WM_RBUTTONDOWN:
-        SendMouseButton(2, 1);
+        if (g_control_mode) SendMouseButton(2, 1);
         return 0;
     case WM_RBUTTONUP:
-        SendMouseButton(2, 0);
+        if (g_control_mode) SendMouseButton(2, 0);
         return 0;
     case WM_MBUTTONDOWN:
-        SendMouseButton(3, 1);
+        if (g_control_mode) SendMouseButton(3, 1);
         return 0;
     case WM_MBUTTONUP:
-        SendMouseButton(3, 0);
+        if (g_control_mode) SendMouseButton(3, 0);
+        return 0;
+    case WM_KILLFOCUS:
+        if (g_control_mode) {
+            SetControlMode(hwnd, false);
+        }
+        return 0;
+    case WM_WINDOWPOSCHANGED:
+        if (g_control_mode) {
+            RecomputeCenter(hwnd);
+            SetCursorPos(g_center_screen_x, g_center_screen_y);
+        }
         return 0;
     case WM_TIMER:
         UpdateTitleFps(hwnd);
@@ -395,6 +473,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     std::memory_order_relaxed);
         return 0;
     case WM_DESTROY:
+        if (g_control_mode) {
+            ShowCursor(TRUE);
+            ReleaseCapture();
+            g_control_mode = false;
+        }
         if (g_mem_dc != nullptr) {
             if (g_mem_bmp != nullptr) {
                 SelectObject(g_mem_dc, g_mem_old_bmp);
@@ -497,11 +580,6 @@ int main(int argc, char** argv) {
         WSACleanup();
         return 1;
     }
-
-    RECT client_rc;
-    GetClientRect(hwnd, &client_rc);
-    g_last_x = (client_rc.right - client_rc.left) / 2;
-    g_last_y = (client_rc.bottom - client_rc.top) / 2;
 
     SetTimer(hwnd, 1, 1000, nullptr);
     ShowWindow(hwnd, SW_SHOW);
