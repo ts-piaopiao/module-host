@@ -420,7 +420,6 @@ int main(int argc, char* argv[]) {
 
         core_decision decision_decided = {};
         decider.Update(&detections, &decision_decided);
-        // 6c 仲裁接入前，仍用 decision_policy 走后续 execute
 
         std::vector<core_action> events;
         if (remote) {
@@ -454,7 +453,7 @@ int main(int argc, char* argv[]) {
                 LogPrintf("[内核] 人工覆盖: %d 个动作\n", static_cast<int>(events.size()));
             }
         } else {
-            final_decision = decision_policy;
+            final_decision = decision_decided;   // 从 decision_policy 改为 decision_decided
         }
 
         if (final_decision.out_count == 0) {

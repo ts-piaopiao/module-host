@@ -27,6 +27,14 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
     if (out == nullptr) return;
     out->out_count = 0;
 
+    struct LogGuard {
+        const core_decision* out;
+        ~LogGuard() {
+            std::fprintf(stdout, "[decider] decision: out_count=%u\n", out->out_count);
+        }
+    };
+    const LogGuard guard{out};
+
     if (dets == nullptr) return;
 
     // 收集所有 cls=0 的候选
