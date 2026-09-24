@@ -229,32 +229,54 @@ public:
     void Update(std::vector<Detection>& dets) {
         for (auto& t : tracks_) t.lost_frames += 1;
 
-        for (auto& d : dets) {
-            int best_idx = -1;
-            float best_iou = 0.3f;
-            for (size_t i = 0; i < tracks_.size(); ++i) {
-                if (tracks_[i].cls != d.cls) continue;
-                const float iou = IoU(tracks_[i], d);
-                if (iou > best_iou) {
-                    best_iou = iou;
-                    best_idx = (int)i;
-                }
+        constexpr float kMatchDx = 0.06f;
+        constexpr float kMatchDy = 0.06f;
+
+        struct Match { int det_idx; int track_idx; float dist2; };
+        std::vector<Match> candidates;
+        for (size_t di = 0; di < dets.size(); ++di) {
+            for (size_t ti = 0; ti < tracks_.size(); ++ti) {
+                if (tracks_[ti].cls != dets[di].cls) continue;
+                const float dx = tracks_[ti].cx - dets[di].cx;
+                const float dy = tracks_[ti].cy - dets[di].cy;
+                if (std::fabs(dx) > kMatchDx || std::fabs(dy) > kMatchDy) continue;
+                candidates.push_back({ (int)di, (int)ti, dx * dx + dy * dy });
             }
-            if (best_idx >= 0) {
-                auto& t = tracks_[best_idx];
-                t.cx = d.cx; t.cy = d.cy; t.w = d.w; t.h = d.h;
-                t.lost_frames = 0;
-                t.age += 1;
-                d.track_id = t.id;
-            } else {
-                Track t;
-                t.id = next_id_++;
-                t.cls = d.cls;
-                t.cx = d.cx; t.cy = d.cy; t.w = d.w; t.h = d.h;
-                t.lost_frames = 0;
-                t.age = 1;
-                tracks_.push_back(t);
-                d.track_id = t.id;
+        }
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const Match& a, const Match& b) { return a.dist2 < b.dist2; });
+
+        std::vector<bool> det_used(dets.size(), false);
+        std::vector<bool> track_used(tracks_.size(), false);
+        for (const auto& m : candidates) {
+            if (det_used[m.det_idx] || track_used[m.track_idx]) continue;
+            det_used[m.det_idx] = true;
+            track_used[m.track_idx] = true;
+            auto& t = tracks_[m.track_idx];
+            auto& d = dets[m.det_idx];
+            t.cx = d.cx; t.cy = d.cy; t.w = d.w; t.h = d.h;
+            t.lost_frames = 0;
+            t.age += 1;
+            d.track_id = t.id;
+        }
+
+        for (size_t di = 0; di < dets.size(); ++di) {
+            if (det_used[di]) continue;
+            Track t;
+            t.id = next_id_++;
+            t.cls = dets[di].cls;
+            t.cx = dets[di].cx; t.cy = dets[di].cy;
+            t.w = dets[di].w; t.h = dets[di].h;
+            t.lost_frames = 0;
+            t.age = 1;
+            tracks_.push_back(t);
+            dets[di].track_id = t.id;
+        }
+
+        if (g_verbose) {
+            for (const auto& d : dets) {
+                std::fprintf(stderr, "[tracker] d_cls=%d d_pos=(%.3f,%.3f) matched_id=%d\n",
+                             d.cls, d.cx, d.cy, d.track_id);
             }
         }
 
@@ -288,10 +310,10 @@ private:
     float lock_py_ = 0.72f;
     ULONGLONG lost_since_ = 0;
 
-    static constexpr float kLockRange = 0.05f;    // 约 100px/1920
+    static constexpr float kLockRange = 0.08f;    // 约 155px/1920，容忍 10fps 移动
     static constexpr float kPriorX = 0.5f;
     static constexpr float kPriorY = 0.72f;
-    static constexpr ULONGLONG kRelockMs = 1000;  // 保护期 1000ms
+    static constexpr ULONGLONG kRelockMs = 500;   // 10fps 下 1000ms 只够 10 次，改 500ms
 };
 
 int MeLock::Update(const std::vector<Detection>& cands) {
@@ -432,7 +454,8 @@ static void PostprocessDetections(
 
         if (d.cx < 0 || d.cx > 1 || d.cy < 0 || d.cy > 1) continue;
 
-        const float min_px = 30.0f / 640.0f;
+        // w 和 h 都 < 20/640 才丢弃（原 30/640，放宽 1.5 倍）
+        const float min_px = 20.0f / 640.0f;
         if (d.w < min_px && d.h < min_px) continue;
 
         candidates.push_back(d);
