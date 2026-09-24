@@ -26,12 +26,13 @@
 #define CORE_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 #endif
 
-#define CORE_ABI_VERSION              3
+#define CORE_ABI_VERSION              4
 #define CORE_PLUGIN_META_NAME_MAX     63
 #define CORE_PLUGIN_META_VERSION_MAX  31
 #define CORE_PLUGIN_META_NAME_BUF     64
 #define CORE_PLUGIN_META_VERSION_BUF  32
 #define CORE_DECISION_CAPACITY        8
+#define CORE_MAX_DETECTIONS           16
 #define CORE_PARAM1                   87
 #define CORE_PLUGIN_META_SEP          '|'
 
@@ -69,13 +70,30 @@ typedef struct core_frame {
     int64_t pts_ms;
 } core_frame;
 
+typedef struct core_detection {
+    int32_t cls;
+    int32_t track_id;
+    float conf;
+    float cx, cy;
+    float w, h;
+} core_detection;
+
+typedef struct core_detections {
+    core_detection items[CORE_MAX_DETECTIONS];
+    uint32_t count;
+} core_detections;
+
 // frame 指向当前帧，由宿主填充。
 // 有效期到 plugin_decide 返回前。
 // policy 插件不得跨帧保存 frame 指针。
 // frame 可以为 nullptr。
+// detections_out 由宿主分配并初始化 count=0。
+// policy 若做检测，填 items/count；不检测则不动。
+// detections_out 可以为 nullptr，policy 必须容忍。
 typedef struct core_intent {
     int32_t param1;
     const core_frame* frame;
+    core_detections* detections_out;
 } core_intent;
 
 typedef enum core_action_kind {
@@ -104,8 +122,9 @@ typedef struct core_execute_result {
     int32_t detail;
 } core_execute_result;
 
-CORE_STATIC_ASSERT(CORE_ABI_VERSION == 3, "CORE_ABI_VERSION must be 3");
+CORE_STATIC_ASSERT(CORE_ABI_VERSION == 4, "CORE_ABI_VERSION must be 4");
 CORE_STATIC_ASSERT(CORE_DECISION_CAPACITY == 8, "CORE_DECISION_CAPACITY must be 8");
+CORE_STATIC_ASSERT(CORE_MAX_DETECTIONS == 16, "CORE_MAX_DETECTIONS must be 16");
 CORE_STATIC_ASSERT(CORE_PARAM1 == 87, "CORE_PARAM1 must be 87");
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_NAME_MAX == 63, "CORE_PLUGIN_META_NAME_MAX must be 63");
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_VERSION_MAX == 31, "CORE_PLUGIN_META_VERSION_MAX must be 31");
@@ -116,6 +135,8 @@ CORE_STATIC_ASSERT(CORE_PLUGIN_META_VERSION_BUF == CORE_PLUGIN_META_VERSION_MAX 
 CORE_STATIC_ASSERT(CORE_OK == 0, "CORE_OK must be 0");
 CORE_STATIC_ASSERT(sizeof(((core_decision*)0)->actions) / sizeof(core_action) == 8,
                    "core_decision.actions must have 8 elements");
+CORE_STATIC_ASSERT(sizeof(((core_detections*)0)->items) / sizeof(core_detection) == CORE_MAX_DETECTIONS,
+                   "core_detections.items must have CORE_MAX_DETECTIONS elements");
 CORE_STATIC_ASSERT(offsetof(core_intent, frame) >= sizeof(int32_t),
                    "core_intent.frame must come after param1");
 

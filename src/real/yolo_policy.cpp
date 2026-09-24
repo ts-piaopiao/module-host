@@ -508,11 +508,11 @@ static void InferenceLoop() {
 extern "C" {
 
 const char* plugin_meta(void) {
-    return "yolo_policy|0.1.0|3|policy";
+    return "yolo_policy|0.1.0|4|policy";
 }
 
 core_error plugin_init(uint32_t host_abi, const char* config) {
-    if (host_abi != 3) {
+    if (host_abi != 4) {
         return CORE_ERR_ABI_MISMATCH;
     }
 
@@ -661,20 +661,24 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
         g_frame_seq += 1;
     }
 
-    std::vector<Detection> dets;
-    {
+    if (intent->detections_out != nullptr) {
         std::lock_guard<std::mutex> lk(g_result_mutex);
-        dets = g_result_detections;
+        uint32_t n = 0;
+        for (const auto& d : g_result_detections) {
+            if (n >= CORE_MAX_DETECTIONS) break;
+            auto& o = intent->detections_out->items[n];
+            o.cls = d.cls;
+            o.track_id = d.track_id;
+            o.conf = d.conf;
+            o.cx = d.cx;
+            o.cy = d.cy;
+            o.w = d.w;
+            o.h = d.h;
+            n++;
+        }
+        intent->detections_out->count = n;
     }
 
-    std::fprintf(stderr, "[yolo] 检测到 %zu 个目标\n", dets.size());
-    for (const auto& d : dets) {
-        const char* name = (d.cls == 0) ? "me" : (d.cls == 1) ? "monster" : "?";
-        std::fprintf(stderr, "[yolo]   %s id=%d conf=%.3f cx=%.3f cy=%.3f w=%.3f h=%.3f\n",
-                     name, d.track_id, d.conf, d.cx, d.cy, d.w, d.h);
-    }
-
-    out->out_count = 0;
     return CORE_OK;
 }
 

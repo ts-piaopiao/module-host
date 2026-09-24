@@ -379,6 +379,7 @@ int main(int argc, char* argv[]) {
     core_frame frame = {};
     core_intent intent = {};
     core_decision decision_policy = {};
+    core_detections detections = {};
 
     std::set<int32_t> pressed_keys;
     std::set<int32_t> pressed_buttons;
@@ -400,6 +401,7 @@ int main(int argc, char* argv[]) {
 
         intent.param1 = 0;
         intent.frame = &frame;
+        intent.detections_out = &detections;   // 新增
 
         if (states[1].decide(&intent, &decision_policy) != CORE_OK) {
             LogPrintf("[错误] 决策失败\n");

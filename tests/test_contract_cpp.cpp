@@ -1,8 +1,9 @@
 #include "core_contract.h"
 #include "core_contract.h"
 
-CORE_STATIC_ASSERT(CORE_ABI_VERSION == 3, "CORE_ABI_VERSION must be 3");
+CORE_STATIC_ASSERT(CORE_ABI_VERSION == 4, "CORE_ABI_VERSION must be 4");
 CORE_STATIC_ASSERT(CORE_DECISION_CAPACITY == 8, "CORE_DECISION_CAPACITY must be 8");
+CORE_STATIC_ASSERT(CORE_MAX_DETECTIONS == 16, "CORE_MAX_DETECTIONS must be 16");
 CORE_STATIC_ASSERT(CORE_PARAM1 == 87, "CORE_PARAM1 must be 87");
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_NAME_MAX == 63, "CORE_PLUGIN_META_NAME_MAX must be 63");
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_VERSION_MAX == 31, "CORE_PLUGIN_META_VERSION_MAX must be 31");
@@ -10,8 +11,9 @@ CORE_STATIC_ASSERT(CORE_PLUGIN_META_NAME_BUF == 64, "CORE_PLUGIN_META_NAME_BUF m
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_VERSION_BUF == 32, "CORE_PLUGIN_META_VERSION_BUF must be 32");
 CORE_STATIC_ASSERT(CORE_OK == 0, "CORE_OK must be 0");
 
-static_assert(CORE_ABI_VERSION == 3, "CORE_ABI_VERSION must be 3");
+static_assert(CORE_ABI_VERSION == 4, "CORE_ABI_VERSION must be 4");
 static_assert(CORE_DECISION_CAPACITY == 8, "CORE_DECISION_CAPACITY must be 8");
+static_assert(CORE_MAX_DETECTIONS == 16, "CORE_MAX_DETECTIONS must be 16");
 static_assert(CORE_PARAM1 == 87, "CORE_PARAM1 must be 87");
 static_assert(CORE_PLUGIN_META_NAME_MAX == 63, "CORE_PLUGIN_META_NAME_MAX must be 63");
 static_assert(CORE_PLUGIN_META_VERSION_MAX == 31, "CORE_PLUGIN_META_VERSION_MAX must be 31");
@@ -20,7 +22,7 @@ static_assert(CORE_PLUGIN_META_VERSION_BUF == 32, "CORE_PLUGIN_META_VERSION_BUF 
 static_assert(CORE_OK == 0, "CORE_OK must be 0");
 
 static const core_frame frame_var = {};
-static core_intent intent_var = {CORE_PARAM1, nullptr};
+static core_intent intent_var = {CORE_PARAM1, nullptr, nullptr};
 static core_decision decision_var = {{}, 0};
 
 const char* (*fn_plugin_meta)(void) = plugin_meta;

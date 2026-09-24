@@ -411,7 +411,7 @@ core_error DoInit(uint32_t host_abi, const char* config) {
 extern "C" {
 
 const char* plugin_meta(void) {
-    return "real_capture|1.0.0|3|capture";
+    return "real_capture|1.0.0|4|capture";
 }
 
 core_error plugin_init(uint32_t host_abi, const char* config) {
