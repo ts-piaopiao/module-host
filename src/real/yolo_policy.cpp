@@ -16,6 +16,7 @@ static std::string g_model_path;
 static std::string g_input_name;
 static std::string g_output_name;
 static uint64_t g_last_input_hash = 0;
+static int g_verbose = 0;
 
 static std::wstring ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -103,12 +104,14 @@ static void PreprocessFrame(const core_frame* frame,
         }
     }
 
-    std::fprintf(stderr, "[yolo] sample: B[0]=%.4f G[0]=%.4f R[0]=%.4f B[mid]=%.4f G[mid]=%.4f R[mid]=%.4f\n",
-                 out_tensor[0], out_tensor[S * S],
-                 out_tensor[2 * S * S],
-                 out_tensor[S * S / 2],
-                 out_tensor[S * S + S * S / 2],
-                 out_tensor[2 * S * S + S * S / 2]);
+    if (g_verbose) {
+        std::fprintf(stderr, "[yolo] sample: B[0]=%.4f G[0]=%.4f R[0]=%.4f B[mid]=%.4f G[mid]=%.4f R[mid]=%.4f\n",
+                     out_tensor[0], out_tensor[S * S],
+                     out_tensor[2 * S * S],
+                     out_tensor[S * S / 2],
+                     out_tensor[S * S + S * S / 2],
+                     out_tensor[2 * S * S + S * S / 2]);
+    }
 }
 
 static void PrintInputStats(const std::vector<float>& tensor)
@@ -121,8 +124,10 @@ static void PrintInputStats(const std::vector<float>& tensor)
         sum += v;
     }
     const double mean = sum / tensor.size();
-    std::fprintf(stderr, "[yolo] 输入张量: size=%zu min=%.4f max=%.4f mean=%.4f\n",
-                 tensor.size(), mn, mx, mean);
+    if (g_verbose) {
+        std::fprintf(stderr, "[yolo] 输入张量: size=%zu min=%.4f max=%.4f mean=%.4f\n",
+                     tensor.size(), mn, mx, mean);
+    }
 }
 
 static void PrintOutputStats(const float* data, size_t count)
@@ -135,13 +140,15 @@ static void PrintOutputStats(const float* data, size_t count)
         sum += data[i];
     }
     const double mean = sum / count;
-    std::fprintf(stderr, "[yolo] 输出张量: count=%zu min=%.4f max=%.4f mean=%.4f\n",
-                 count, mn, mx, mean);
-    std::fprintf(stderr, "[yolo] 输出前 12 个值:");
-    for (size_t i = 0; i < 12 && i < count; ++i) {
-        std::fprintf(stderr, " %.4f", data[i]);
+    if (g_verbose) {
+        std::fprintf(stderr, "[yolo] 输出张量: count=%zu min=%.4f max=%.4f mean=%.4f\n",
+                     count, mn, mx, mean);
+        std::fprintf(stderr, "[yolo] 输出前 12 个值:");
+        for (size_t i = 0; i < 12 && i < count; ++i) {
+            std::fprintf(stderr, " %.4f", data[i]);
+        }
+        std::fprintf(stderr, "\n");
     }
-    std::fprintf(stderr, "\n");
 }
 
 static uint64_t ComputeTensorHash(const std::vector<float>& tensor) {
@@ -440,6 +447,9 @@ core_error plugin_init(uint32_t host_abi, const char* config) {
         g_model_path = "D:\\dev\\module-host\\models\\yolo11s.onnx";
     }
 
+    const std::string verbose_str = GetConfigValue(config, "policy_verbose");
+    g_verbose = (verbose_str == "1") ? 1 : 0;
+
     if (g_env == nullptr) {
         g_env = new Ort::Env(nullptr, ORT_LOGGING_LEVEL_WARNING, "yolo_policy");
     }
@@ -548,8 +558,10 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
     float scale = 0.0f;
     int dw = 0, dh = 0;
     PreprocessFrame(f, kInputSize, input_tensor, &scale, &dw, &dh);
-    std::fprintf(stderr, "[yolo] frame: %ux%u stride=%u pts_ms=%lld\n",
-                 f->width, f->height, f->stride, (long long)f->pts_ms);
+    if (g_verbose) {
+        std::fprintf(stderr, "[yolo] frame: %ux%u stride=%u pts_ms=%lld\n",
+                     f->width, f->height, f->stride, (long long)f->pts_ms);
+    }
 
     const uint64_t h = ComputeTensorHash(input_tensor);
     if (h == g_last_input_hash) {
@@ -587,13 +599,17 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
         const float* out_data = outputs[0].GetTensorData<float>();
         auto out_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
         size_t count = 1;
-        std::fprintf(stderr, "[yolo] 输出 shape: [");
         for (size_t i = 0; i < out_shape.size(); ++i) {
-            std::fprintf(stderr, "%lld%s", (long long)out_shape[i],
-                         i + 1 < out_shape.size() ? ", " : "");
             count *= static_cast<size_t>(out_shape[i]);
         }
-        std::fprintf(stderr, "]\n");
+        if (g_verbose) {
+            std::fprintf(stderr, "[yolo] 输出 shape: [");
+            for (size_t i = 0; i < out_shape.size(); ++i) {
+                std::fprintf(stderr, "%lld%s", (long long)out_shape[i],
+                             i + 1 < out_shape.size() ? ", " : "");
+            }
+            std::fprintf(stderr, "]\n");
+        }
         PrintOutputStats(out_data, count);
 
         if (out_shape.size() == 3 && out_shape[2] > 0) {
@@ -629,9 +645,23 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
                 std::fprintf(stderr, "[yolo]   %s id=%d conf=%.3f cx=%.3f cy=%.3f w=%.3f h=%.3f\n",
                              name, d.track_id, d.conf, d.cx, d.cy, d.w, d.h);
             }
+
+            int monsters = 0;
+            for (const auto& d : detections) {
+                if (d.cls == 1 && d.conf >= 0.5f) ++monsters;
+            }
+            if (me_id >= 0) {
+                std::fprintf(stderr, "[yolo] me=id=%d monsters=%d\n", me_id, monsters);
+            } else {
+                std::fprintf(stderr, "[yolo] me=none monsters=%d\n", monsters);
+            }
         }
     }
 
+    // 5d 会在这一层填动作；现在只输出空决策
+    out->out_count = 0;
+
+    // 5c-4 只验证通路：每帧输出一行汇总，便于 5d 接口对齐
     return CORE_OK;
 }
 
