@@ -398,6 +398,9 @@ int main(int argc, char* argv[]) {
             remote->PushFrame(frame.data, frame.width, frame.height);
         }
 
+        intent.param1 = 0;
+        intent.frame = &frame;
+
         if (states[1].decide(&intent, &decision_policy) != CORE_OK) {
             LogPrintf("[错误] 决策失败\n");
             Cleanup(states, kDllCount);

@@ -127,7 +127,7 @@ const char* ButtonName(int32_t id) {
 extern "C" {
 
 const char* plugin_meta(void) {
-    return "real_input|1.0.0|2|input";
+    return "real_input|1.0.0|3|input";
 }
 
 core_error plugin_init(uint32_t host_abi, const char* config) {

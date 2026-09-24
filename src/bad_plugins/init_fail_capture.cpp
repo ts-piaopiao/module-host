@@ -1,7 +1,7 @@
 #include "core_contract.h"
 
 const char* plugin_meta(void) {
-    return "fake_capture|1.0.0|2|capture";
+    return "fake_capture|1.0.0|3|capture";
 }
 
 core_error plugin_init(uint32_t host_abi, const char* config) {

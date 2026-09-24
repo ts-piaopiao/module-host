@@ -3,7 +3,7 @@
 extern "C" {
 
 const char* plugin_meta(void) {
-    return "test_policy|1.0.0|2|policy";
+    return "test_policy|1.0.0|3|policy";
 }
 
 core_error plugin_init(uint32_t host_abi, const char* config) {

@@ -26,7 +26,7 @@
 #define CORE_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 #endif
 
-#define CORE_ABI_VERSION              2
+#define CORE_ABI_VERSION              3
 #define CORE_PLUGIN_META_NAME_MAX     63
 #define CORE_PLUGIN_META_VERSION_MAX  31
 #define CORE_PLUGIN_META_NAME_BUF     64
@@ -69,8 +69,13 @@ typedef struct core_frame {
     int64_t pts_ms;
 } core_frame;
 
+// frame 指向当前帧，由宿主填充。
+// 有效期到 plugin_decide 返回前。
+// policy 插件不得跨帧保存 frame 指针。
+// frame 可以为 nullptr。
 typedef struct core_intent {
     int32_t param1;
+    const core_frame* frame;
 } core_intent;
 
 typedef enum core_action_kind {
@@ -99,7 +104,7 @@ typedef struct core_execute_result {
     int32_t detail;
 } core_execute_result;
 
-CORE_STATIC_ASSERT(CORE_ABI_VERSION == 2, "CORE_ABI_VERSION must be 2");
+CORE_STATIC_ASSERT(CORE_ABI_VERSION == 3, "CORE_ABI_VERSION must be 3");
 CORE_STATIC_ASSERT(CORE_DECISION_CAPACITY == 8, "CORE_DECISION_CAPACITY must be 8");
 CORE_STATIC_ASSERT(CORE_PARAM1 == 87, "CORE_PARAM1 must be 87");
 CORE_STATIC_ASSERT(CORE_PLUGIN_META_NAME_MAX == 63, "CORE_PLUGIN_META_NAME_MAX must be 63");
@@ -111,6 +116,8 @@ CORE_STATIC_ASSERT(CORE_PLUGIN_META_VERSION_BUF == CORE_PLUGIN_META_VERSION_MAX 
 CORE_STATIC_ASSERT(CORE_OK == 0, "CORE_OK must be 0");
 CORE_STATIC_ASSERT(sizeof(((core_decision*)0)->actions) / sizeof(core_action) == 8,
                    "core_decision.actions must have 8 elements");
+CORE_STATIC_ASSERT(offsetof(core_intent, frame) >= sizeof(int32_t),
+                   "core_intent.frame must come after param1");
 
 CORE_BEGIN_DECLS
 
