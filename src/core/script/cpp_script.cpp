@@ -212,11 +212,19 @@ struct CppScript::Impl {
     static constexpr int kETapMsMin = 150;
     static constexpr int kETapMsMax = 300;
     static constexpr uint64_t kRecoveryMs = 850;
+    static constexpr int kTurnPressDelayMinMs = 100;
+    static constexpr int kTurnPressDelayMaxMs = 200;
+    static constexpr int kTurnKeyReleaseDelayMs = 100;
+    static constexpr uint64_t kTurnBounceMs = 200;
+    static constexpr uint64_t kChaseTurnCooldownMs = 300;
+    static constexpr float kNearFaceThreshold = 0.010f;
+    static constexpr int kReverseDurationMinMs = 200;
+    static constexpr int kReverseDurationMaxMs = 500;
 
     uint64_t last_log_frame = 0;
     bool inited = false;
 
-    enum class State { IDLE, CHASE, ATTACK, RECOVERY };
+    enum class State { IDLE, CHASE, ATTACK, ATTACK_TURN, RECOVERY };
     State state = State::IDLE;
 
     MeLockState me;
@@ -227,8 +235,26 @@ struct CppScript::Impl {
     bool e_pressed = false;
     int current_e_tap_ms = kETapMsMin;
 
+    // 朝向
+    int facing = 1;
+    uint64_t last_dir_ms = 0;
+
+    // 转身攻击
+    int turn_phase = 0;
+    uint64_t turn_phase_start_ms = 0;
+    int turn_dir_key = 0;
+    int turn_press_delay_ms = 0;
+    int turn_e_tap_ms = 0;
+    bool turn_key_pressed = false;
+    bool turn_e_pressed = false;
+
+    // 贴脸后退
+    bool reversing = false;
+    uint64_t reverse_start_ms = 0;
+
     int active_key = 0;
     int last_pressed = 0;
+    bool desired_e = false;
 };
 
 CppScript::CppScript() : impl_(new Impl()) {}
@@ -257,13 +283,56 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         if (impl_->state != Impl::State::IDLE) {
             impl_->state = Impl::State::IDLE;
             impl_->e_pressed = false;
+            impl_->reversing = false;
+            impl_->turn_key_pressed = false;
+            impl_->turn_e_pressed = false;
         }
     } else {
+        const bool in_band = IsInBand(impl_->target, impl_->me);
+        const float dx_target = impl_->target.cx - impl_->me.fx;
+        const int target_dir = (dx_target > 0) ? 1 : -1;
+        const bool is_front = (target_dir == impl_->facing);
+        const bool too_close = impl_->me.valid && impl_->target.has &&
+                               (std::fabs(dx_target) < Impl::kNearFaceThreshold);
+        const bool fresh_target = (impl_->target.lost_since == 0);
+
         switch (impl_->state) {
             case Impl::State::IDLE:
+                if (impl_->me.valid && impl_->target.has) {
+                    if (in_band && is_front && fresh_target) {
+                        impl_->state = Impl::State::ATTACK;
+                        impl_->attack_start_ms = now;
+                        impl_->e_pressed = true;
+                        impl_->current_e_tap_ms =
+                            Impl::kETapMsMin +
+                            (std::rand() % (Impl::kETapMsMax - Impl::kETapMsMin + 1));
+                        std::printf("[script] E 按下时长: %d ms\n",
+                                    impl_->current_e_tap_ms);
+                        std::fflush(stdout);
+                    } else if (in_band && !is_front && fresh_target) {
+                        impl_->state = Impl::State::ATTACK_TURN;
+                        impl_->turn_phase = 0;
+                        impl_->turn_phase_start_ms = now;
+                        impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
+                        impl_->turn_press_delay_ms =
+                            Impl::kTurnPressDelayMinMs +
+                            (std::rand() % (Impl::kTurnPressDelayMaxMs - Impl::kTurnPressDelayMinMs + 1));
+                        impl_->turn_e_tap_ms =
+                            Impl::kETapMsMin +
+                            (std::rand() % (Impl::kETapMsMax - Impl::kETapMsMin + 1));
+                        impl_->turn_key_pressed = false;
+                        impl_->turn_e_pressed = false;
+                    } else {
+                        impl_->state = Impl::State::CHASE;
+                    }
+                }
+                break;
+
             case Impl::State::CHASE:
-                if (IsInBand(impl_->target, impl_->me) &&
-                    impl_->target.lost_since == 0) {
+                if (!impl_->me.valid || !impl_->target.has) {
+                    impl_->state = Impl::State::IDLE;
+                    impl_->reversing = false;
+                } else if (in_band && is_front && fresh_target) {
                     impl_->state = Impl::State::ATTACK;
                     impl_->attack_start_ms = now;
                     impl_->e_pressed = true;
@@ -273,39 +342,158 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     std::printf("[script] E 按下时长: %d ms\n",
                                 impl_->current_e_tap_ms);
                     std::fflush(stdout);
-                } else {
-                    impl_->state = Impl::State::CHASE;
+                } else if (in_band && !is_front && fresh_target) {
+                    if (now - impl_->last_dir_ms >= Impl::kTurnBounceMs) {
+                        impl_->state = Impl::State::ATTACK_TURN;
+                        impl_->turn_phase = 0;
+                        impl_->turn_phase_start_ms = now;
+                        impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
+                        impl_->turn_press_delay_ms =
+                            Impl::kTurnPressDelayMinMs +
+                            (std::rand() % (Impl::kTurnPressDelayMaxMs - Impl::kTurnPressDelayMinMs + 1));
+                        impl_->turn_e_tap_ms =
+                            Impl::kETapMsMin +
+                            (std::rand() % (Impl::kETapMsMax - Impl::kETapMsMin + 1));
+                        impl_->turn_key_pressed = false;
+                        impl_->turn_e_pressed = false;
+                    }
+                } else if (too_close) {
+                    if (!impl_->reversing) {
+                        impl_->reversing = true;
+                        impl_->reverse_start_ms = now;
+                    }
                 }
                 break;
+
             case Impl::State::ATTACK:
-                if (now - impl_->attack_start_ms >=
-                    static_cast<uint64_t>(impl_->current_e_tap_ms)) {
+                if (!impl_->me.valid || !impl_->target.has) {
+                    impl_->state = Impl::State::IDLE;
+                    impl_->e_pressed = false;
+                } else if (now - impl_->attack_start_ms >=
+                           static_cast<uint64_t>(impl_->current_e_tap_ms)) {
                     impl_->e_pressed = false;
                     impl_->state = Impl::State::RECOVERY;
                     impl_->recovery_start_ms = now;
                 }
                 break;
+
+            case Impl::State::ATTACK_TURN: {
+                if (impl_->turn_phase == 0) {
+                    if (!impl_->turn_key_pressed) {
+                        impl_->turn_key_pressed = true;
+                        impl_->facing = target_dir;
+                        impl_->last_dir_ms = now;
+                    }
+                    if (now - impl_->turn_phase_start_ms >=
+                        static_cast<uint64_t>(impl_->turn_press_delay_ms)) {
+                        impl_->turn_phase = 1;
+                        impl_->turn_phase_start_ms = now;
+                    }
+                } else if (impl_->turn_phase == 1) {
+                    if (!impl_->turn_e_pressed) {
+                        impl_->turn_e_pressed = true;
+                    }
+                    if (now - impl_->turn_phase_start_ms >=
+                        static_cast<uint64_t>(impl_->turn_e_tap_ms)) {
+                        impl_->turn_phase = 2;
+                        impl_->turn_phase_start_ms = now;
+                    }
+                } else if (impl_->turn_phase == 2) {
+                    if (now - impl_->turn_phase_start_ms >=
+                        Impl::kTurnKeyReleaseDelayMs) {
+                        impl_->turn_phase = 3;
+                    }
+                } else if (impl_->turn_phase == 3) {
+                    impl_->turn_key_pressed = false;
+                    impl_->turn_e_pressed = false;
+                    impl_->state = Impl::State::RECOVERY;
+                    impl_->recovery_start_ms = now;
+                }
+                break;
+            }
+
             case Impl::State::RECOVERY:
-                if (now - impl_->recovery_start_ms >= Impl::kRecoveryMs) {
+                if (!impl_->me.valid || !impl_->target.has) {
+                    impl_->state = Impl::State::IDLE;
+                } else if (now - impl_->recovery_start_ms >= Impl::kRecoveryMs) {
                     impl_->state = Impl::State::CHASE;
                 }
                 break;
         }
     }
 
-    if (impl_->state == Impl::State::IDLE ||
-        impl_->state == Impl::State::RECOVERY) {
-        impl_->active_key = 0;
-    } else if (impl_->state == Impl::State::ATTACK) {
-        impl_->active_key = 0x45;
-    } else {
-        const float dx = impl_->target.cx - impl_->me.fx;
-        if (std::fabs(dx) < 0.02f) {
-            impl_->active_key = 0;
-        } else {
-            impl_->active_key = (dx > 0) ? 0x27 : 0x25;
+    // 决定按键
+    int desired_dir = 0;
+    bool desired_e = false;
+    const float dx_target = impl_->target.cx - impl_->me.fx;
+    const int target_dir = (dx_target > 0) ? 1 : -1;
+    const bool too_close = impl_->me.valid && impl_->target.has &&
+                           (std::fabs(dx_target) < Impl::kNearFaceThreshold);
+
+    switch (impl_->state) {
+        case Impl::State::IDLE:
+            desired_dir = 0;
+            desired_e = false;
+            break;
+
+        case Impl::State::CHASE: {
+            if (too_close && impl_->reversing) {
+                const int reverse_duration =
+                    Impl::kReverseDurationMinMs +
+                    (std::rand() % (Impl::kReverseDurationMaxMs - Impl::kReverseDurationMinMs + 1));
+                if (now - impl_->reverse_start_ms <
+                    static_cast<uint64_t>(reverse_duration)) {
+                    desired_dir = (dx_target > 0) ? 0x25 : 0x27;
+                } else {
+                    impl_->reversing = false;
+                }
+            } else {
+                const float abs_dx = std::fabs(dx_target);
+                if (abs_dx < 0.02f) {
+                    desired_dir = 0;
+                } else {
+                    const int want_dir = (dx_target > 0) ? 0x27 : 0x25;
+                    const int want_facing = (dx_target > 0) ? 1 : -1;
+                    if (want_facing != impl_->facing) {
+                        if (now - impl_->last_dir_ms < Impl::kChaseTurnCooldownMs) {
+                            desired_dir = (impl_->facing > 0) ? 0x27 : 0x25;
+                        } else {
+                            desired_dir = (dx_target > 0) ? 0x27 : 0x25;
+                            impl_->facing = (dx_target > 0) ? 1 : -1;
+                            impl_->last_dir_ms = now;
+                        }
+                    } else {
+                        desired_dir = (dx_target > 0) ? 0x27 : 0x25;
+                    }
+                }
+            }
+            desired_e = false;
+            break;
         }
+
+        case Impl::State::ATTACK:
+            desired_dir = 0;
+            desired_e = true;
+            break;
+
+        case Impl::State::ATTACK_TURN: {
+            if (impl_->turn_phase <= 2) {
+                desired_dir = impl_->turn_dir_key;
+            } else {
+                desired_dir = 0;
+            }
+            desired_e = (impl_->turn_phase == 1 || impl_->turn_phase == 2);
+            break;
+        }
+
+        case Impl::State::RECOVERY:
+            desired_dir = 0;
+            desired_e = false;
+            break;
     }
+
+    impl_->active_key = desired_dir;
+    impl_->desired_e = desired_e;
 
     if (world.frame_index - impl_->last_log_frame >= 30) {
         impl_->last_log_frame = world.frame_index;
@@ -314,16 +502,19 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             case Impl::State::IDLE: state_str = "IDLE"; break;
             case Impl::State::CHASE: state_str = "CHASE"; break;
             case Impl::State::ATTACK: state_str = "ATTACK"; break;
+            case Impl::State::ATTACK_TURN: state_str = "ATTACK_TURN"; break;
             case Impl::State::RECOVERY: state_str = "RECOVERY"; break;
         }
-        std::printf("[script] frame=%llu state=%s me_locked=%d me=(%.3f,%.3f) target_locked=%d target_cx=%.3f key=0x%02X\n",
+        std::printf("[script] frame=%llu state=%s facing=%d me_locked=%d me=(%.3f,%.3f) target_locked=%d target_cx=%.3f key=0x%02X e=%d\n",
                     (unsigned long long)world.frame_index,
                     state_str,
+                    impl_->facing,
                     impl_->me.locked ? 1 : 0,
                     impl_->me.fx, impl_->me.fy,
                     impl_->target.locked ? 1 : 0,
                     impl_->target.cx,
-                    impl_->active_key);
+                    impl_->active_key,
+                    desired_e ? 1 : 0);
         std::fflush(stdout);
     }
 }
@@ -331,6 +522,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 void CppScript::GetDecision(core_decision* out) {
     out->out_count = 0;
 
+    // 方向键差分
     if (impl_->active_key != impl_->last_pressed) {
         if (impl_->last_pressed != 0 && out->out_count < CORE_DECISION_CAPACITY) {
             out->actions[out->out_count].kind = CORE_ACTION_KEY;
@@ -347,6 +539,26 @@ void CppScript::GetDecision(core_decision* out) {
             out->out_count++;
         }
         impl_->last_pressed = impl_->active_key;
+    }
+
+    // E键差分（简化：仅根据 desired_e 和 e_pressed 状态）
+    static bool last_desired_e = false;
+    if (impl_->desired_e != last_desired_e) {
+        if (last_desired_e && out->out_count < CORE_DECISION_CAPACITY) {
+            out->actions[out->out_count].kind = CORE_ACTION_KEY;
+            out->actions[out->out_count].a = 0x45;
+            out->actions[out->out_count].b = 0;
+            out->actions[out->out_count].c = 0;
+            out->out_count++;
+        }
+        if (impl_->desired_e && out->out_count < CORE_DECISION_CAPACITY) {
+            out->actions[out->out_count].kind = CORE_ACTION_KEY;
+            out->actions[out->out_count].a = 0x45;
+            out->actions[out->out_count].b = 1;
+            out->actions[out->out_count].c = 0;
+            out->out_count++;
+        }
+        last_desired_e = impl_->desired_e;
     }
 }
 
