@@ -4,6 +4,7 @@
 #include "config.h"
 #include "remote_server.h"
 #include "decider.h"
+#include "recorder.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -237,10 +238,17 @@ void BuildHumanDecision(const std::vector<core_action>& events,
 
 int main(int argc, char* argv[]) {
     std::unique_ptr<RemoteServer> remote;
+    struct RecorderDeleter {
+        void operator()(Recorder* r) const {
+            if (r) { r->Stop(); delete r; }
+        }
+    };
+    std::unique_ptr<Recorder, RecorderDeleter> recorder;
     bool show_help = false;
     bool show_version = false;
     std::string plugins_dir;
     std::string config_path;
+    std::string record_path;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             show_help = true;
@@ -258,6 +266,12 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             plugins_dir = argv[++i];
+        } else if (std::strcmp(argv[i], "--record") == 0) {
+            if (i + 1 >= argc) {
+                LogPrintf("[错误] 缺失参数: --record\n");
+                return 1;
+            }
+            record_path = argv[++i];
         }
     }
 
@@ -267,6 +281,7 @@ int main(int argc, char* argv[]) {
         std::printf("选项:\n");
         std::printf("  --plugins-dir <目录>   指定插件目录\n");
         std::printf("  --config <路径>       指定配置文件\n");
+        std::printf("  --record <路径>       记录每帧检测与决策到 JSONL\n");
         std::printf("  --help, -h            显示本帮助\n");
         std::printf("  --version, -v         显示版本\n");
         return 0;
@@ -309,6 +324,17 @@ int main(int argc, char* argv[]) {
         if (!g_log_file.is_open()) {
             std::printf("[错误] 日志打开失败: %s\n", config.log_path.c_str());
             return 1;
+        }
+    }
+
+    if (!record_path.empty()) {
+        recorder.reset(new Recorder());
+        if (!recorder->Start(record_path)) {
+            LogPrintf("[错误] 记录启动失败: %s\n", record_path.c_str());
+            recorder.reset();
+            // 不退出，只是不记录
+        } else {
+            LogPrintf("[内核] 记录已启动: %s\n", record_path.c_str());
         }
     }
 
@@ -422,8 +448,22 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        if (recorder) {
+            for (uint32_t di = 0; di < detections.count; ++di) {
+                recorder->RecordDetection(static_cast<uint64_t>(i), detections.items[di]);
+            }
+        }
+
         core_decision decision_decided = {};
         decider.Update(&detections, &decision_decided);
+
+        if (recorder) {
+            float me_fx = 0.0f, me_fy = 0.0f;
+            const bool me_valid = decider.GetMeLock(&me_fx, &me_fy);
+            recorder->RecordDecision(static_cast<uint64_t>(i),
+                                     me_valid, me_fx, me_fy,
+                                     &decision_decided);
+        }
 
         std::vector<core_action> events;
         if (remote) {
@@ -445,6 +485,12 @@ int main(int argc, char* argv[]) {
                 } else {
                     pressed_buttons.erase(act.a);
                 }
+            }
+        }
+
+        if (recorder) {
+            for (const auto& ev : events) {
+                recorder->RecordHuman(static_cast<uint64_t>(i), ev);
             }
         }
 
