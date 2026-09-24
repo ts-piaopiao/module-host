@@ -5,8 +5,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <atomic>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cstdio>
 
@@ -361,6 +366,25 @@ int MeLock::Update(const std::vector<Detection>& cands) {
 
 MeLock g_me_lock;
 
+// 像素快照（由主线程写，推理线程读）
+std::mutex g_frame_mutex;
+std::vector<uint8_t> g_frame_bgra;
+uint32_t g_frame_w = 0;
+uint32_t g_frame_h = 0;
+uint32_t g_frame_stride = 0;
+uint64_t g_frame_seq = 0;
+
+// 检测结果（由推理线程写，主线程读）
+std::mutex g_result_mutex;
+std::vector<Detection> g_result_detections;
+int g_result_me_id = -1;
+uint64_t g_result_seq = 0;
+
+// 推理线程控制
+std::thread g_infer_thread;
+std::atomic<bool> g_infer_stop{false};
+int g_infer_fps = 10;
+
 }  // namespace
 
 static void PostprocessDetections(
@@ -431,6 +455,135 @@ static void PostprocessDetections(
     }
 }
 
+static void InferenceLoop() {
+    static constexpr uint32_t kInputSize = 640;
+    uint64_t last_seq = 0;
+    std::vector<uint8_t> local_bgra;
+
+    while (!g_infer_stop) {
+        uint32_t w = 0, h = 0, stride = 0;
+        uint64_t seq = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_frame_mutex);
+            if (g_frame_bgra.empty() || g_frame_seq == last_seq) {
+                w = 0;
+            } else {
+                w = g_frame_w;
+                h = g_frame_h;
+                stride = g_frame_stride;
+                seq = g_frame_seq;
+                local_bgra = g_frame_bgra;
+            }
+        }
+        if (w == 0 || h == 0 || seq == last_seq || local_bgra.empty()) {
+            Sleep(5);
+            continue;
+        }
+        last_seq = seq;
+
+        core_frame f = {};
+        f.width = w;
+        f.height = h;
+        f.stride = stride;
+        f.format = CORE_PIXEL_FORMAT_BGRA8;
+        f.data = local_bgra.data();
+        f.size = local_bgra.size();
+        f.pts_ms = 0;
+
+        std::vector<float> input_tensor;
+        float scale = 0.0f;
+        int dw = 0, dh = 0;
+        PreprocessFrame(&f, kInputSize, input_tensor, &scale, &dw, &dh);
+        if (g_verbose) {
+            std::fprintf(stderr, "[yolo] frame: %ux%u stride=%u seq=%llu\n",
+                         w, h, stride, (unsigned long long)seq);
+        }
+
+        const uint64_t hsh = ComputeTensorHash(input_tensor);
+        if (hsh == g_last_input_hash) {
+            std::fprintf(stderr, "[yolo] 输入帧重复，跳过推理\n");
+            Sleep(1000 / (g_infer_fps > 0 ? g_infer_fps : 10));
+            continue;
+        }
+        g_last_input_hash = hsh;
+
+        PrintInputStats(input_tensor);
+
+        const std::array<int64_t, 4> input_shape = { 1, 3, kInputSize, kInputSize };
+        Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value input_tensor_ort = Ort::Value::CreateTensor<float>(
+            mem_info,
+            input_tensor.data(),
+            input_tensor.size(),
+            input_shape.data(),
+            input_shape.size());
+
+        const char* input_names[] = { g_input_name.c_str() };
+        const char* output_names[] = { g_output_name.c_str() };
+
+        std::vector<Ort::Value> outputs;
+        try {
+            outputs = g_session->Run(
+                Ort::RunOptions{ nullptr },
+                input_names, &input_tensor_ort, 1,
+                output_names, 1);
+        } catch (const Ort::Exception& e) {
+            std::fprintf(stderr, "[yolo] 推理异常: %s\n", e.what());
+            Sleep(1000 / (g_infer_fps > 0 ? g_infer_fps : 10));
+            continue;
+        }
+
+        std::vector<Detection> detections;
+        int me_id = -1;
+        if (!outputs.empty() && outputs[0].IsTensor()) {
+            const float* out_data = outputs[0].GetTensorData<float>();
+            auto out_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+            size_t count = 1;
+            for (size_t i = 0; i < out_shape.size(); ++i) {
+                count *= static_cast<size_t>(out_shape[i]);
+            }
+            if (g_verbose) {
+                std::fprintf(stderr, "[yolo] 输出 shape: [");
+                for (size_t i = 0; i < out_shape.size(); ++i) {
+                    std::fprintf(stderr, "%lld%s", (long long)out_shape[i],
+                                 i + 1 < out_shape.size() ? ", " : "");
+                }
+                std::fprintf(stderr, "]\n");
+            }
+            PrintOutputStats(out_data, count);
+
+            if (out_shape.size() == 3 && out_shape[2] > 0) {
+                PostprocessDetections(
+                    out_data,
+                    2,
+                    static_cast<size_t>(out_shape[2]),
+                    0.25f,
+                    0.45f,
+                    scale, dw, dh,
+                    f.width, f.height,
+                    detections);
+
+                g_tracker.Update(detections);
+
+                std::vector<Detection> me_cands;
+                for (const auto& d : detections) {
+                    if (d.cls == 0) me_cands.push_back(d);
+                }
+                me_id = g_me_lock.Update(me_cands);
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(g_result_mutex);
+            g_result_detections = detections;
+            g_result_me_id = me_id;
+            g_result_seq = seq;
+        }
+
+        Sleep(1000 / (g_infer_fps > 0 ? g_infer_fps : 10));
+    }
+}
+
 extern "C" {
 
 const char* plugin_meta(void) {
@@ -449,6 +602,13 @@ core_error plugin_init(uint32_t host_abi, const char* config) {
 
     const std::string verbose_str = GetConfigValue(config, "policy_verbose");
     g_verbose = (verbose_str == "1") ? 1 : 0;
+
+    const std::string fps_str = GetConfigValue(config, "policy_fps");
+    g_infer_fps = 10;
+    if (!fps_str.empty()) {
+        const int v = std::atoi(fps_str.c_str());
+        if (v > 0) g_infer_fps = v;
+    }
 
     if (g_env == nullptr) {
         g_env = new Ort::Env(nullptr, ORT_LOGGING_LEVEL_WARNING, "yolo_policy");
@@ -517,10 +677,36 @@ core_error plugin_init(uint32_t host_abi, const char* config) {
         }
     }
 
+    g_infer_stop = false;
+    if (g_infer_thread.joinable()) {
+        g_infer_thread.join();
+    }
+    g_infer_thread = std::thread(InferenceLoop);
+
     return CORE_OK;
 }
 
 core_error plugin_release(void) {
+    g_infer_stop = true;
+    if (g_infer_thread.joinable()) {
+        g_infer_thread.join();
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_frame_mutex);
+        g_frame_bgra.clear();
+        g_frame_bgra.shrink_to_fit();
+        g_frame_w = 0;
+        g_frame_h = 0;
+        g_frame_stride = 0;
+        g_frame_seq = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_result_mutex);
+        g_result_detections.clear();
+        g_result_detections.shrink_to_fit();
+        g_result_me_id = -1;
+        g_result_seq = 0;
+    }
     delete g_session;
     g_session = nullptr;
     delete g_env;
@@ -538,130 +724,49 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
         return CORE_ERR_DECIDE;
     }
     out->out_count = 0;
-
-    if (g_session == nullptr || g_env == nullptr) {
-        return CORE_ERR_DECIDE;
-    }
-    if (intent == nullptr || intent->frame == nullptr) {
-        std::fprintf(stderr, "[yolo] decide: intent 或 frame 为空，跳过推理\n");
-        return CORE_OK;
-    }
-    const core_frame* f = intent->frame;
-    if (f->data == nullptr || f->width == 0 || f->height == 0 ||
-        f->format != CORE_PIXEL_FORMAT_BGRA8) {
-        std::fprintf(stderr, "[yolo] decide: frame 无效\n");
+    if (intent == nullptr) {
         return CORE_OK;
     }
 
-    static constexpr uint32_t kInputSize = 640;
-    std::vector<float> input_tensor;
-    float scale = 0.0f;
-    int dw = 0, dh = 0;
-    PreprocessFrame(f, kInputSize, input_tensor, &scale, &dw, &dh);
-    if (g_verbose) {
-        std::fprintf(stderr, "[yolo] frame: %ux%u stride=%u pts_ms=%lld\n",
-                     f->width, f->height, f->stride, (long long)f->pts_ms);
+    if (intent->frame != nullptr && intent->frame->data != nullptr &&
+        intent->frame->width > 0 && intent->frame->height > 0 &&
+        intent->frame->format == CORE_PIXEL_FORMAT_BGRA8) {
+        const core_frame* f = intent->frame;
+        const size_t need = static_cast<size_t>(f->width) * f->height * 4u;
+        std::lock_guard<std::mutex> lk(g_frame_mutex);
+        g_frame_bgra.assign(f->data, f->data + need);
+        g_frame_w = f->width;
+        g_frame_h = f->height;
+        g_frame_stride = f->stride;
+        g_frame_seq += 1;
     }
 
-    const uint64_t h = ComputeTensorHash(input_tensor);
-    if (h == g_last_input_hash) {
-        std::fprintf(stderr, "[yolo] 输入帧重复，跳过推理\n");
-        return CORE_OK;
-    }
-    g_last_input_hash = h;
-
-    PrintInputStats(input_tensor);
-
-    const std::array<int64_t, 4> input_shape = { 1, 3, kInputSize, kInputSize };
-    Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    Ort::Value input_tensor_ort = Ort::Value::CreateTensor<float>(
-        mem_info,
-        input_tensor.data(),
-        input_tensor.size(),
-        input_shape.data(),
-        input_shape.size());
-
-    const char* input_names[] = { g_input_name.c_str() };
-    const char* output_names[] = { g_output_name.c_str() };
-
-    std::vector<Ort::Value> outputs;
-    try {
-        outputs = g_session->Run(
-            Ort::RunOptions{ nullptr },
-            input_names, &input_tensor_ort, 1,
-            output_names, 1);
-    } catch (const Ort::Exception& e) {
-        std::fprintf(stderr, "[yolo] 推理异常: %s\n", e.what());
-        return CORE_OK;
+    std::vector<Detection> dets;
+    int me_id = -1;
+    {
+        std::lock_guard<std::mutex> lk(g_result_mutex);
+        dets = g_result_detections;
+        me_id = g_result_me_id;
     }
 
-    if (!outputs.empty() && outputs[0].IsTensor()) {
-        const float* out_data = outputs[0].GetTensorData<float>();
-        auto out_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
-        size_t count = 1;
-        for (size_t i = 0; i < out_shape.size(); ++i) {
-            count *= static_cast<size_t>(out_shape[i]);
-        }
-        if (g_verbose) {
-            std::fprintf(stderr, "[yolo] 输出 shape: [");
-            for (size_t i = 0; i < out_shape.size(); ++i) {
-                std::fprintf(stderr, "%lld%s", (long long)out_shape[i],
-                             i + 1 < out_shape.size() ? ", " : "");
-            }
-            std::fprintf(stderr, "]\n");
-        }
-        PrintOutputStats(out_data, count);
-
-        if (out_shape.size() == 3 && out_shape[2] > 0) {
-            std::vector<Detection> detections;
-            PostprocessDetections(
-                out_data,
-                2,
-                static_cast<size_t>(out_shape[2]),
-                0.25f,
-                0.45f,
-                scale, dw, dh,
-                f->width, f->height,
-                detections);
-
-            g_tracker.Update(detections);
-
-            // 收集 cls=0
-            std::vector<Detection> me_cands;
-            for (const auto& d : detections) {
-                if (d.cls == 0) me_cands.push_back(d);
-            }
-            const int me_id = g_me_lock.Update(me_cands);
-            if (me_id >= 0) {
-                std::fprintf(stderr, "[yolo] me_lock: id=%d fx=%.3f fy=%.3f\n",
-                             me_id, g_me_lock.GetLockPx(), g_me_lock.GetLockPy());
-            } else {
-                std::fprintf(stderr, "[yolo] me_lock: none (保护期内)\n");
-            }
-
-            std::fprintf(stderr, "[yolo] 检测到 %zu 个目标\n", detections.size());
-            for (const auto& d : detections) {
-                const char* name = (d.cls == 0) ? "me" : (d.cls == 1) ? "monster" : "?";
-                std::fprintf(stderr, "[yolo]   %s id=%d conf=%.3f cx=%.3f cy=%.3f w=%.3f h=%.3f\n",
-                             name, d.track_id, d.conf, d.cx, d.cy, d.w, d.h);
-            }
-
-            int monsters = 0;
-            for (const auto& d : detections) {
-                if (d.cls == 1 && d.conf >= 0.5f) ++monsters;
-            }
-            if (me_id >= 0) {
-                std::fprintf(stderr, "[yolo] me=id=%d monsters=%d\n", me_id, monsters);
-            } else {
-                std::fprintf(stderr, "[yolo] me=none monsters=%d\n", monsters);
-            }
-        }
+    if (me_id >= 0) {
+        std::fprintf(stderr, "[yolo] me_lock: id=%d (from cache)\n", me_id);
+    } else {
+        std::fprintf(stderr, "[yolo] me_lock: none (from cache)\n");
     }
+    std::fprintf(stderr, "[yolo] 检测到 %zu 个目标\n", dets.size());
+    for (const auto& d : dets) {
+        const char* name = (d.cls == 0) ? "me" : (d.cls == 1) ? "monster" : "?";
+        std::fprintf(stderr, "[yolo]   %s id=%d conf=%.3f cx=%.3f cy=%.3f w=%.3f h=%.3f\n",
+                     name, d.track_id, d.conf, d.cx, d.cy, d.w, d.h);
+    }
+    int monster_count = 0;
+    for (const auto& d : dets) {
+        if (d.cls == 1 && d.conf >= 0.5f) ++monster_count;
+    }
+    std::fprintf(stderr, "[yolo] me=id=%d monsters=%d\n", me_id, monster_count);
 
-    // 5d 会在这一层填动作；现在只输出空决策
     out->out_count = 0;
-
-    // 5c-4 只验证通路：每帧输出一行汇总，便于 5d 接口对齐
     return CORE_OK;
 }
 
