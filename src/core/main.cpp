@@ -3,7 +3,7 @@
 #include "core_contract.h"
 #include "config.h"
 #include "remote_server.h"
-#include "decider.h"
+#include "script/script_host.h"
 #include "recorder.h"
 
 #include <cstdarg>
@@ -407,10 +407,11 @@ int main(int argc, char* argv[]) {
     core_intent intent = {};
     core_decision decision_policy = {};
     core_detections detections = {};
-    Decider decider;
-    if (config.has_decider_dry_run && config.decider_dry_run == 1) {
-        decider.SetDryRun(true);
-        LogPrintf("[内核] decider dry_run=1\n");
+    ScriptHost script_host;
+    if (!script_host.Start(raw_config)) {
+        LogPrintf("[错误] 脚本启动失败\n");
+        Cleanup(states, kDllCount);
+        return 1;
     }
 
     std::set<int32_t> pressed_keys;
@@ -457,12 +458,15 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        float me_fx = 0.0f, me_fy = 0.0f;
+        const bool me_valid = script_host.GetMeLock(&me_fx, &me_fy);
+
         core_decision decision_decided = {};
-        decider.Update(&detections, &decision_decided);
+        script_host.OnFrame(static_cast<uint64_t>(frame_index), GetTickCount64(),
+                            me_valid, me_fx, me_fy, &detections);
+        script_host.GetDecision(&decision_decided);
 
         if (recorder) {
-            float me_fx = 0.0f, me_fy = 0.0f;
-            const bool me_valid = decider.GetMeLock(&me_fx, &me_fy);
             recorder->RecordDecision(static_cast<uint64_t>(frame_index),
                                      me_valid, me_fx, me_fy,
                                      &decision_decided);
@@ -527,6 +531,7 @@ int main(int argc, char* argv[]) {
     } else {
         LogPrintf("[内核] 无限模式结束\n");
     }
+    script_host.Stop();
     Cleanup(states, kDllCount);
     return 0;
 #else
