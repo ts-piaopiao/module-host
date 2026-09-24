@@ -1,7 +1,6 @@
 #include "combat.h"
 
 #include <cstdint>
-#include <cstdio>
 
 namespace {
 
@@ -98,11 +97,4 @@ void Combat::Update(bool me_valid, float me_fx, float me_fy,
             impl_->last_e_down = true;
         }
     }
-
-    // 临时诊断：out 已填完（跑完删）
-    std::fprintf(stdout, "[combat] me=(%.3f,%.3f) monsters=%u best_fx=%.3f dx=%.3f out=%u last_dir=0x%02X last_e=%d\n",
-                 me_fx, me_fy, m_count,
-                 (m_count > 0 ? ms[best].fx : 0.0f),
-                 (m_count > 0 ? ms[best].fx - me_fx : 0.0f),
-                 out->out_count, impl_->last_dir_key, impl_->last_e_down ? 1 : 0);
 }

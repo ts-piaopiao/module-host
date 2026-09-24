@@ -17,6 +17,9 @@ public:
     // 获取当前锁定的 me 位置和有效性
     bool GetMeLock(float* fx, float* fy) const;
 
+    // dry_run=true 时 Update 不输出任何动作（out_count=0）
+    void SetDryRun(bool dry);
+
 private:
     struct Impl;
     Impl* impl_;

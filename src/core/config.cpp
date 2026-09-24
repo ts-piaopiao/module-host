@@ -60,7 +60,7 @@ bool ParseFrames(const std::string& value, int* out, std::string* err) {
             break;
         }
     }
-    if (parsed < 1 || parsed > 3600) {
+    if (parsed < 1 || parsed > 100000) {
         *err = "frames 超出范围: " + value;
         return false;
     }
@@ -157,6 +157,17 @@ bool LoadConfigFile(const std::string& path, CoreConfig* out, std::string* err) 
             }
             config.remote_jpeg_quality = remote_jpeg_quality;
             config.has_remote_jpeg_quality = true;
+        } else if (key == "decider_dry_run") {
+            int decider_dry_run = 0;
+            if (!ParseIntStrict(value, &decider_dry_run, err, "decider_dry_run")) {
+                return false;
+            }
+            if (decider_dry_run != 0 && decider_dry_run != 1) {
+                *err = "decider_dry_run 必须为 0 或 1: " + value;
+                return false;
+            }
+            config.decider_dry_run = decider_dry_run;
+            config.has_decider_dry_run = true;
         } else if (key.rfind("capture_", 0) == 0 ||
                    key.rfind("policy_", 0) == 0 ||
                    key.rfind("input_", 0) == 0) {

@@ -122,6 +122,8 @@ int AnalyzeMoves(const VerifySample& t0, const VerifySample& t1, const VerifySam
 struct Decider::Impl {
     Combat combat;
 
+    bool dry_run = false;
+
     int lock_id = -1;
     float lock_fx = 0.5f;
     float lock_fy = 0.72f;
@@ -158,6 +160,10 @@ bool Decider::GetMeLock(float* fx, float* fy) const {
     return true;
 }
 
+void Decider::SetDryRun(bool dry) {
+    impl_->dry_run = dry;
+}
+
 void Decider::Update(const core_detections* dets, core_decision* out) {
     if (out == nullptr) return;
     out->out_count = 0;
@@ -170,6 +176,9 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             impl_->combat.Update(true, impl_->lock_fx, impl_->lock_fy, dets, out);
         } else {
             impl_->combat.Update(false, 0, 0, dets, out);
+        }
+        if (impl_->dry_run) {
+            out->out_count = 0;
         }
         std::fprintf(stdout, "[decider] decision: out_count=%u\n", out->out_count);
     };
@@ -282,6 +291,9 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             break;
         default:
             break;
+        }
+        if (impl_->dry_run) {
+            out->out_count = 0;
         }
         std::fprintf(stdout, "[decider] decision: out_count=%u\n", out->out_count);
         return;

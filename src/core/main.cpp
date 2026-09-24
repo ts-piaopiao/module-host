@@ -382,6 +382,10 @@ int main(int argc, char* argv[]) {
     core_decision decision_policy = {};
     core_detections detections = {};
     Decider decider;
+    if (config.has_decider_dry_run && config.decider_dry_run == 1) {
+        decider.SetDryRun(true);
+        LogPrintf("[内核] decider dry_run=1\n");
+    }
 
     std::set<int32_t> pressed_keys;
     std::set<int32_t> pressed_buttons;
