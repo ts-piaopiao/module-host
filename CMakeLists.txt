@@ -9,6 +9,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(BUILD_STAGE2_PLUGINS "Build stage2 plugins" OFF)
 
+set(ONNXRUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
+
 add_executable(module_host_core src/core/main.cpp src/core/config.cpp src/core/remote_server.cpp src/core/jpeg_encoder.cpp)
 set_target_properties(module_host_core PROPERTIES OUTPUT_NAME core)
 target_include_directories(module_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -17,6 +19,12 @@ target_link_libraries(module_host_core PRIVATE ws2_32 windowscodecs shlwapi ole3
 if(BUILD_STAGE2_PLUGINS)
     target_compile_definitions(module_host_core PRIVATE BUILD_STAGE2_PLUGINS=1)
 endif()
+add_custom_command(TARGET module_host_core POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${ONNXRUNTIME_ROOT}/bin/onnxruntime.dll
+        ${ONNXRUNTIME_ROOT}/bin/onnxruntime_providers_shared.dll
+        $<TARGET_FILE_DIR:module_host_core>
+)
 
 add_library(stage1_stub_capture SHARED src/stubs/stub_capture.cpp)
 target_compile_definitions(stage1_stub_capture PRIVATE CORE_BUILDING_PLUGIN)
@@ -227,5 +235,20 @@ if(BUILD_STAGE2_PLUGINS)
     set_target_properties(stage2_test_policy PROPERTIES
         OUTPUT_NAME policy_plugin
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_real
+    )
+
+    add_library(stage2_yolo_policy SHARED src/real/yolo_policy.cpp)
+    target_compile_definitions(stage2_yolo_policy PRIVATE CORE_BUILDING_PLUGIN)
+    target_include_directories(stage2_yolo_policy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ONNXRUNTIME_ROOT}/include
+    )
+    target_compile_options(stage2_yolo_policy PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    target_link_libraries(stage2_yolo_policy PRIVATE
+        ${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib
+    )
+    set_target_properties(stage2_yolo_policy PROPERTIES
+        OUTPUT_NAME policy_plugin
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_yolo
     )
 endif()

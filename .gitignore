@@ -10,3 +10,5 @@ build/
 out/
 experiments/**/out_*.bmp
 experiments/**/*.bmp
+third_party/
+models/
