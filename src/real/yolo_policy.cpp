@@ -2,6 +2,8 @@
 #include <windows.h>
 #include <onnxruntime_cxx_api.h>
 #include <dml_provider_factory.h>
+#include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 #include <cstdio>
@@ -9,6 +11,8 @@
 static Ort::Env* g_env = nullptr;
 static Ort::Session* g_session = nullptr;
 static std::string g_model_path;
+static std::string g_input_name;
+static std::string g_output_name;
 
 static std::wstring ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -52,6 +56,91 @@ static std::string GetConfigValue(const char* config, const char* key) {
     return val;
 }
 
+static void PreprocessFrame(const core_frame* frame,
+                            uint32_t input_size,
+                            std::vector<float>& out_tensor,
+                            float* out_scale,
+                            int* out_dw,
+                            int* out_dh)
+{
+    const uint32_t W = frame->width;
+    const uint32_t H = frame->height;
+    const uint32_t S = input_size;
+
+    const float r = (std::min)(static_cast<float>(S) / W, static_cast<float>(S) / H);
+    const int new_w = static_cast<int>(W * r + 0.5f);
+    const int new_h = static_cast<int>(H * r + 0.5f);
+    const int dw = (static_cast<int>(S) - new_w) / 2;
+    const int dh = (static_cast<int>(S) - new_h) / 2;
+
+    *out_scale = r;
+    *out_dw = dw;
+    *out_dh = dh;
+
+    const float pad = 114.0f / 255.0f;
+    out_tensor.assign(3 * S * S, pad);
+
+    const uint8_t* base = frame->data;
+    const uint32_t stride = frame->stride;
+
+    for (int y = 0; y < new_h; ++y) {
+        const int sy = (std::min)(static_cast<int>(y / r), static_cast<int>(H) - 1);
+        const uint8_t* src_row = base + sy * stride;
+        const int oy = y + dh;
+        for (int x = 0; x < new_w; ++x) {
+            const int sx = (std::min)(static_cast<int>(x / r), static_cast<int>(W) - 1);
+            const uint8_t* p = src_row + sx * 4;
+            const float b = p[0] / 255.0f;
+            const float g = p[1] / 255.0f;
+            const float rch = p[2] / 255.0f;
+            const int ox = x + dw;
+            out_tensor[0 * S * S + oy * S + ox] = b;
+            out_tensor[1 * S * S + oy * S + ox] = g;
+            out_tensor[2 * S * S + oy * S + ox] = rch;
+        }
+    }
+
+    std::fprintf(stderr, "[yolo] sample: B[0]=%.4f G[0]=%.4f R[0]=%.4f B[mid]=%.4f G[mid]=%.4f R[mid]=%.4f\n",
+                 out_tensor[0], out_tensor[S * S],
+                 out_tensor[2 * S * S],
+                 out_tensor[S * S / 2],
+                 out_tensor[S * S + S * S / 2],
+                 out_tensor[2 * S * S + S * S / 2]);
+}
+
+static void PrintInputStats(const std::vector<float>& tensor)
+{
+    float mn = tensor[0], mx = tensor[0];
+    double sum = 0.0;
+    for (float v : tensor) {
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+        sum += v;
+    }
+    const double mean = sum / tensor.size();
+    std::fprintf(stderr, "[yolo] 输入张量: size=%zu min=%.4f max=%.4f mean=%.4f\n",
+                 tensor.size(), mn, mx, mean);
+}
+
+static void PrintOutputStats(const float* data, size_t count)
+{
+    float mn = data[0], mx = data[0];
+    double sum = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        if (data[i] < mn) mn = data[i];
+        if (data[i] > mx) mx = data[i];
+        sum += data[i];
+    }
+    const double mean = sum / count;
+    std::fprintf(stderr, "[yolo] 输出张量: count=%zu min=%.4f max=%.4f mean=%.4f\n",
+                 count, mn, mx, mean);
+    std::fprintf(stderr, "[yolo] 输出前 12 个值:");
+    for (size_t i = 0; i < 12 && i < count; ++i) {
+        std::fprintf(stderr, " %.4f", data[i]);
+    }
+    std::fprintf(stderr, "\n");
+}
+
 extern "C" {
 
 const char* plugin_meta(void) {
@@ -91,6 +180,16 @@ core_error plugin_init(uint32_t host_abi, const char* config) {
     fprintf(stderr, "[yolo] 模型加载成功: %s\n", g_model_path.c_str());
 
     const size_t num_inputs = g_session->GetInputCount();
+    const size_t num_outputs = g_session->GetOutputCount();
+    if (num_inputs > 0) {
+        g_input_name = g_session->GetInputNameAllocated(0, allocator).get();
+    }
+    if (num_outputs > 0) {
+        g_output_name = g_session->GetOutputNameAllocated(0, allocator).get();
+    }
+    fprintf(stderr, "[yolo] 输入名: %s\n", g_input_name.c_str());
+    fprintf(stderr, "[yolo] 输出名: %s\n", g_output_name.c_str());
+
     fprintf(stderr, "[yolo] 输入数量: %zu\n", num_inputs);
     for (size_t i = 0; i < num_inputs; ++i) {
         auto info = g_session->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
@@ -108,7 +207,6 @@ core_error plugin_init(uint32_t host_abi, const char* config) {
         }
     }
 
-    const size_t num_outputs = g_session->GetOutputCount();
     fprintf(stderr, "[yolo] 输出数量: %zu\n", num_outputs);
     for (size_t i = 0; i < num_outputs; ++i) {
         auto info = g_session->GetOutputTypeInfo(i).GetTensorTypeAndShapeInfo();
@@ -143,8 +241,72 @@ core_error plugin_capture(core_frame* out) {
 }
 
 core_error plugin_decide(const core_intent* intent, core_decision* out) {
-    (void)intent;
-    (void)out;
+    if (out == nullptr) {
+        return CORE_ERR_DECIDE;
+    }
+    out->out_count = 0;
+
+    if (g_session == nullptr || g_env == nullptr) {
+        return CORE_ERR_DECIDE;
+    }
+    if (intent == nullptr || intent->frame == nullptr) {
+        std::fprintf(stderr, "[yolo] decide: intent 或 frame 为空，跳过推理\n");
+        return CORE_OK;
+    }
+    const core_frame* f = intent->frame;
+    if (f->data == nullptr || f->width == 0 || f->height == 0 ||
+        f->format != CORE_PIXEL_FORMAT_BGRA8) {
+        std::fprintf(stderr, "[yolo] decide: frame 无效\n");
+        return CORE_OK;
+    }
+
+    static constexpr uint32_t kInputSize = 640;
+    std::vector<float> input_tensor;
+    float scale = 0.0f;
+    int dw = 0, dh = 0;
+    PreprocessFrame(f, kInputSize, input_tensor, &scale, &dw, &dh);
+    std::fprintf(stderr, "[yolo] frame: %ux%u stride=%u pts_ms=%lld\n",
+                 f->width, f->height, f->stride, (long long)f->pts_ms);
+
+    PrintInputStats(input_tensor);
+
+    const std::array<int64_t, 4> input_shape = { 1, 3, kInputSize, kInputSize };
+    Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::Value input_tensor_ort = Ort::Value::CreateTensor<float>(
+        mem_info,
+        input_tensor.data(),
+        input_tensor.size(),
+        input_shape.data(),
+        input_shape.size());
+
+    const char* input_names[] = { g_input_name.c_str() };
+    const char* output_names[] = { g_output_name.c_str() };
+
+    std::vector<Ort::Value> outputs;
+    try {
+        outputs = g_session->Run(
+            Ort::RunOptions{ nullptr },
+            input_names, &input_tensor_ort, 1,
+            output_names, 1);
+    } catch (const Ort::Exception& e) {
+        std::fprintf(stderr, "[yolo] 推理异常: %s\n", e.what());
+        return CORE_OK;
+    }
+
+    if (!outputs.empty() && outputs[0].IsTensor()) {
+        const float* out_data = outputs[0].GetTensorData<float>();
+        auto out_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+        size_t count = 1;
+        std::fprintf(stderr, "[yolo] 输出 shape: [");
+        for (size_t i = 0; i < out_shape.size(); ++i) {
+            std::fprintf(stderr, "%lld%s", (long long)out_shape[i],
+                         i + 1 < out_shape.size() ? ", " : "");
+            count *= static_cast<size_t>(out_shape[i]);
+        }
+        std::fprintf(stderr, "]\n");
+        PrintOutputStats(out_data, count);
+    }
+
     return CORE_OK;
 }
 
