@@ -138,6 +138,7 @@ struct Decider::Impl {
     static constexpr float kLockRange = 0.05f;
     static constexpr float kPriorX = 0.5f;
     static constexpr float kPriorY = 0.72f;
+    static constexpr float kUniqueMaxDist = 0.5f;
     static constexpr unsigned long long kRelockMs = 3000;
     static constexpr float kDxThresh = 0.01f;
     static constexpr float kMaxMatchDist = 0.30f;
@@ -320,12 +321,20 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             return;
         }
         if (cand_count == 1) {
-            impl_->lock_id = cands[0].track_id;
-            impl_->lock_fx = cands[0].fx;
-            impl_->lock_fy = cands[0].fy;
-            impl_->lost_since = 0;
-            std::fprintf(stdout, "[decider] me_lock: id=%d fx=%.3f fy=%.3f (unique)\n",
-                         impl_->lock_id, impl_->lock_fx, impl_->lock_fy);
+            const float dxp = cands[0].fx - Impl::kPriorX;
+            const float dyp = cands[0].fy - Impl::kPriorY;
+            const float dp = std::sqrt(dxp * dxp + dyp * dyp);
+            if (dp <= Impl::kUniqueMaxDist) {
+                impl_->lock_id = cands[0].track_id;
+                impl_->lock_fx = cands[0].fx;
+                impl_->lock_fy = cands[0].fy;
+                impl_->lost_since = 0;
+                std::fprintf(stdout, "[decider] me_lock: id=%d fx=%.3f fy=%.3f (unique, dp=%.3f)\n",
+                             impl_->lock_id, impl_->lock_fx, impl_->lock_fy, dp);
+            } else {
+                std::fprintf(stdout, "[decider] me_lock: unique id=%d too far (dp=%.3f > %.3f), skip\n",
+                             cands[0].track_id, dp, Impl::kUniqueMaxDist);
+            }
             finish();
             return;
         }
