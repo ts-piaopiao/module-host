@@ -262,7 +262,8 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         switch (impl_->state) {
             case Impl::State::IDLE:
             case Impl::State::CHASE:
-                if (IsInBand(impl_->target, impl_->me)) {
+                if (IsInBand(impl_->target, impl_->me) &&
+                    impl_->target.lost_since == 0) {
                     impl_->state = Impl::State::ATTACK;
                     impl_->attack_start_ms = now;
                     impl_->e_pressed = true;
