@@ -3,15 +3,11 @@
 #include <windows.h>
 
 #include <cstdlib>
-#include <set>
 #include <string>
 
 namespace {
 
 HANDLE g_port = INVALID_HANDLE_VALUE;
-
-// 当前按下的键（用 mk 命令名，例如 "right", "e"）
-static std::set<std::string> g_pressed_keys;
 
 std::string Trim(const std::string& s) {
     size_t begin = 0;
@@ -204,7 +200,6 @@ core_error plugin_release(void) {
         CloseHandle(g_port);
         g_port = INVALID_HANDLE_VALUE;
     }
-    g_pressed_keys.clear();
     return CORE_OK;
 }
 
@@ -219,6 +214,9 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
     return CORE_OK;
 }
 
+// TODO(脚本层): Combat 需要在状态切换时显式输出 release 动作，
+// 由脚本层维护"脚本按下的键"的生命周期。
+// 本插件仅做纯翻译（action → mk 命令），不做状态推断。
 core_error plugin_execute(const core_decision* decision, core_execute_result* out) {
     if (g_port == INVALID_HANDLE_VALUE || decision == nullptr ||
         decision->out_count > CORE_DECISION_CAPACITY) {
@@ -229,7 +227,6 @@ core_error plugin_execute(const core_decision* decision, core_execute_result* ou
         return CORE_ERR_EXECUTE;
     }
 
-    std::set<std::string> this_frame_pressed;
     for (uint32_t i = 0; i < decision->out_count; ++i) {
         const core_action& act = decision->actions[i];
         switch (act.kind) {
@@ -277,7 +274,6 @@ core_error plugin_execute(const core_decision* decision, core_execute_result* ou
             std::string cmd;
             if (act.b == 1) {
                 cmd = std::string("mk.press ") + name;
-                this_frame_pressed.insert(name);
             } else if (act.b == 0) {
                 cmd = std::string("mk.release ") + name;
             } else {
@@ -301,20 +297,6 @@ core_error plugin_execute(const core_decision* decision, core_execute_result* ou
             break;
         }
     }
-
-    // 本帧未 press 但上帧仍按着的键 → 自动释放
-    for (const auto& name : g_pressed_keys) {
-        if (this_frame_pressed.find(name) == this_frame_pressed.end()) {
-            if (!SendCommand(g_port, std::string("mk.release ") + name)) {
-                if (out != nullptr) {
-                    out->status = CORE_ERR_EXECUTE;
-                    out->detail = 0;
-                }
-                return CORE_ERR_EXECUTE;
-            }
-        }
-    }
-    g_pressed_keys = this_frame_pressed;
 
     if (out != nullptr) {
         out->status = CORE_OK;
