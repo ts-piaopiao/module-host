@@ -198,6 +198,20 @@ static float IoU_xywh(const Detection& a, const Detection& b) {
 }
 
 static void FilterDetections(std::vector<Detection>& dets) {
+    // 规则 0：退化框过滤
+    std::vector<Detection> filtered;
+    filtered.reserve(dets.size());
+    for (const auto& d : dets) {
+        if (d.w <= 0.0f || d.h <= 0.0f) continue;
+        // 面积过滤：只对 cls=1，占画面面积 < 1500/(1920*1080) 丢弃
+        if (d.cls == 1) {
+            constexpr float kMonsterMinArea = 1500.0f / (1920.0f * 1080.0f);
+            if (d.w * d.h < kMonsterMinArea) continue;
+        }
+        filtered.push_back(d);
+    }
+    dets = std::move(filtered);
+
     // 规则 1+2：边缘 + 低 conf
     std::vector<Detection> stage1;
     stage1.reserve(dets.size());
@@ -548,7 +562,7 @@ static void InferenceLoop() {
                     out_data,
                     2,
                     static_cast<size_t>(out_shape[2]),
-                    0.25f,
+                    0.7f,
                     0.45f,
                     scale, dw, dh,
                     f.width, f.height,
