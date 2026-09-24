@@ -175,6 +175,66 @@ struct Detection {
     int track_id = 0;
 };
 
+static float IoU_xywh(const Detection& a, const Detection& b) {
+    const float ax1 = a.cx - a.w * 0.5f;
+    const float ay1 = a.cy - a.h * 0.5f;
+    const float ax2 = a.cx + a.w * 0.5f;
+    const float ay2 = a.cy + a.h * 0.5f;
+    const float bx1 = b.cx - b.w * 0.5f;
+    const float by1 = b.cy - b.h * 0.5f;
+    const float bx2 = b.cx + b.w * 0.5f;
+    const float by2 = b.cy + b.h * 0.5f;
+    const float ix1 = (std::max)(ax1, bx1);
+    const float iy1 = (std::max)(ay1, by1);
+    const float ix2 = (std::min)(ax2, bx2);
+    const float iy2 = (std::min)(ay2, by2);
+    const float iw = ix2 - ix1;
+    const float ih = iy2 - iy1;
+    if (iw <= 0 || ih <= 0) return 0.0f;
+    const float inter = iw * ih;
+    const float area_a = a.w * a.h;
+    const float area_b = b.w * b.h;
+    return inter / (area_a + area_b - inter + 1e-6f);
+}
+
+static void FilterDetections(std::vector<Detection>& dets) {
+    // 规则 1+2：边缘 + 低 conf
+    std::vector<Detection> stage1;
+    stage1.reserve(dets.size());
+    for (const auto& d : dets) {
+        if (d.cls == 1) {
+            if (d.cx < 0.05f || d.cx > 0.95f) continue;
+            if (d.conf < 0.25f) continue;
+        }
+        stage1.push_back(d);
+    }
+
+    // 规则 3：同类 IoU > 0.8 合并
+    // 按 conf 从高到低排序
+    std::sort(stage1.begin(), stage1.end(),
+              [](const Detection& a, const Detection& b) {
+                  return a.conf > b.conf;
+              });
+
+    std::vector<Detection> stage2;
+    std::vector<bool> suppressed(stage1.size(), false);
+    for (size_t i = 0; i < stage1.size(); ++i) {
+        if (suppressed[i]) continue;
+        stage2.push_back(stage1[i]);
+        // 抑制后面同类且 IoU > 0.8 的
+        for (size_t j = i + 1; j < stage1.size(); ++j) {
+            if (suppressed[j]) continue;
+            if (stage1[i].cls != stage1[j].cls) continue;
+            const float iou = IoU_xywh(stage1[i], stage1[j]);
+            if (iou > 0.8f) {
+                suppressed[j] = true;
+            }
+        }
+    }
+
+    dets = std::move(stage2);
+}
+
 static float IoU(const Detection& a, const Detection& b) {
     const float ax0 = a.cx - a.w * 0.5f;
     const float ay0 = a.cy - a.h * 0.5f;
@@ -490,6 +550,8 @@ static void InferenceLoop() {
                     scale, dw, dh,
                     f.width, f.height,
                     detections);
+
+                FilterDetections(detections);
 
                 g_tracker.Update(detections);
             }
