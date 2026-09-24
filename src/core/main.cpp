@@ -3,6 +3,7 @@
 #include "core_contract.h"
 #include "config.h"
 #include "remote_server.h"
+#include "decider.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -380,6 +381,7 @@ int main(int argc, char* argv[]) {
     core_intent intent = {};
     core_decision decision_policy = {};
     core_detections detections = {};
+    Decider decider;
 
     std::set<int32_t> pressed_keys;
     std::set<int32_t> pressed_buttons;
@@ -387,6 +389,7 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i <= frame_count; ++i) {
         LogPrintf("[帧 %d] 起始\n", i);
+        detections.count = 0;
 
         if (states[0].capture(&frame) != CORE_OK) {
             LogPrintf("[错误] 捕获失败\n");
@@ -414,6 +417,10 @@ int main(int argc, char* argv[]) {
             Cleanup(states, kDllCount);
             return 1;
         }
+
+        core_decision decision_decided = {};
+        decider.Update(&detections, &decision_decided);
+        // 6c 仲裁接入前，仍用 decision_policy 走后续 execute
 
         std::vector<core_action> events;
         if (remote) {
