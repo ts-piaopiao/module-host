@@ -226,7 +226,10 @@ static void FilterDetections(std::vector<Detection>& dets) {
             if (suppressed[j]) continue;
             if (stage1[i].cls != stage1[j].cls) continue;
             const float iou = IoU_xywh(stage1[i], stage1[j]);
-            if (iou > 0.8f) {
+            const float dx = stage1[i].cx - stage1[j].cx;
+            const float dy = stage1[i].cy - stage1[j].cy;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            if (iou > 0.8f || dist < 0.03f) {
                 suppressed[j] = true;
             }
         }
