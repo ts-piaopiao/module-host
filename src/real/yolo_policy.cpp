@@ -141,6 +141,100 @@ static void PrintOutputStats(const float* data, size_t count)
     std::fprintf(stderr, "\n");
 }
 
+struct Detection {
+    int cls;
+    float conf;
+    float cx, cy;
+    float w, h;
+};
+
+static float IoU(const Detection& a, const Detection& b) {
+    const float ax0 = a.cx - a.w * 0.5f;
+    const float ay0 = a.cy - a.h * 0.5f;
+    const float ax1 = a.cx + a.w * 0.5f;
+    const float ay1 = a.cy + a.h * 0.5f;
+    const float bx0 = b.cx - b.w * 0.5f;
+    const float by0 = b.cy - b.h * 0.5f;
+    const float bx1 = b.cx + b.w * 0.5f;
+    const float by1 = b.cy + b.h * 0.5f;
+    const float ix0 = (std::max)(ax0, bx0);
+    const float iy0 = (std::max)(ay0, by0);
+    const float ix1 = (std::min)(ax1, bx1);
+    const float iy1 = (std::min)(ay1, by1);
+    const float iw = (ix1 > ix0) ? (ix1 - ix0) : 0.0f;
+    const float ih = (iy1 > iy0) ? (iy1 - iy0) : 0.0f;
+    const float inter = iw * ih;
+    const float area_a = a.w * a.h;
+    const float area_b = b.w * b.h;
+    const float uni = area_a + area_b - inter;
+    if (uni <= 0.0f) return 0.0f;
+    return inter / uni;
+}
+
+static void PostprocessDetections(
+    const float* out_data,
+    size_t num_classes,
+    size_t num_anchors,
+    float conf_thr,
+    float iou_thr,
+    float scale,
+    int dw, int dh,
+    uint32_t orig_w, uint32_t orig_h,
+    std::vector<Detection>& out)
+{
+    out.clear();
+    std::vector<Detection> candidates;
+    for (size_t i = 0; i < num_anchors; ++i) {
+        float cx = out_data[0 * num_anchors + i];
+        float cy = out_data[1 * num_anchors + i];
+        float w  = out_data[2 * num_anchors + i];
+        float h  = out_data[3 * num_anchors + i];
+
+        int best_cls = -1;
+        float best_conf = 0.0f;
+        for (size_t c = 0; c < num_classes; ++c) {
+            float s = out_data[(4 + c) * num_anchors + i];
+            if (s > best_conf) {
+                best_conf = s;
+                best_cls = (int)c;
+            }
+        }
+        if (best_conf < conf_thr) continue;
+
+        float cx_orig = (cx - dw) / scale;
+        float cy_orig = (cy - dh) / scale;
+        float w_orig  = w / scale;
+        float h_orig  = h / scale;
+
+        Detection d;
+        d.cls = best_cls;
+        d.conf = best_conf;
+        d.cx = cx_orig / orig_w;
+        d.cy = cy_orig / orig_h;
+        d.w  = w_orig  / orig_w;
+        d.h  = h_orig  / orig_h;
+
+        if (d.cx < 0 || d.cx > 1 || d.cy < 0 || d.cy > 1) continue;
+        candidates.push_back(d);
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Detection& a, const Detection& b) { return a.conf > b.conf; });
+
+    std::vector<bool> suppressed(candidates.size(), false);
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        if (suppressed[i]) continue;
+        out.push_back(candidates[i]);
+        for (size_t j = i + 1; j < candidates.size(); ++j) {
+            if (suppressed[j]) continue;
+            if (candidates[j].cls != candidates[i].cls) continue;
+            if (IoU(candidates[i], candidates[j]) > iou_thr) {
+                suppressed[j] = true;
+            }
+        }
+    }
+}
+
 extern "C" {
 
 const char* plugin_meta(void) {
@@ -305,6 +399,26 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
         }
         std::fprintf(stderr, "]\n");
         PrintOutputStats(out_data, count);
+
+        if (out_shape.size() == 3 && out_shape[2] > 0) {
+            std::vector<Detection> detections;
+            PostprocessDetections(
+                out_data,
+                2,
+                static_cast<size_t>(out_shape[2]),
+                0.25f,
+                0.45f,
+                scale, dw, dh,
+                f->width, f->height,
+                detections);
+
+            std::fprintf(stderr, "[yolo] 检测到 %zu 个目标\n", detections.size());
+            for (const auto& d : detections) {
+                const char* name = (d.cls == 0) ? "me" : (d.cls == 1) ? "monster" : "?";
+                std::fprintf(stderr, "[yolo]   %s conf=%.3f cx=%.3f cy=%.3f w=%.3f h=%.3f\n",
+                             name, d.conf, d.cx, d.cy, d.w, d.h);
+            }
+        }
     }
 
     return CORE_OK;
