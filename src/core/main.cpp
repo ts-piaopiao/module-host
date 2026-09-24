@@ -417,8 +417,11 @@ int main(int argc, char* argv[]) {
     std::set<int32_t> pressed_buttons;
     ULONGLONG t_last_event = 0;
 
-    for (int i = 1; i <= frame_count; ++i) {
-        LogPrintf("[帧 %d] 起始\n", i);
+    int frame_index = 0;
+    for (;;) {
+        ++frame_index;
+        if (frame_count > 0 && frame_index > frame_count) break;
+        LogPrintf("[帧 %d] 起始\n", frame_index);
         detections.count = 0;
 
         if (states[0].capture(&frame) != CORE_OK) {
@@ -450,7 +453,7 @@ int main(int argc, char* argv[]) {
 
         if (recorder) {
             for (uint32_t di = 0; di < detections.count; ++di) {
-                recorder->RecordDetection(static_cast<uint64_t>(i), detections.items[di]);
+                recorder->RecordDetection(static_cast<uint64_t>(frame_index), detections.items[di]);
             }
         }
 
@@ -460,7 +463,7 @@ int main(int argc, char* argv[]) {
         if (recorder) {
             float me_fx = 0.0f, me_fy = 0.0f;
             const bool me_valid = decider.GetMeLock(&me_fx, &me_fy);
-            recorder->RecordDecision(static_cast<uint64_t>(i),
+            recorder->RecordDecision(static_cast<uint64_t>(frame_index),
                                      me_valid, me_fx, me_fy,
                                      &decision_decided);
         }
@@ -490,7 +493,7 @@ int main(int argc, char* argv[]) {
 
         if (recorder) {
             for (const auto& ev : events) {
-                recorder->RecordHuman(static_cast<uint64_t>(i), ev);
+                recorder->RecordHuman(static_cast<uint64_t>(frame_index), ev);
             }
         }
 
@@ -519,7 +522,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    LogPrintf("[内核] %d 帧完成\n", frame_count);
+    if (frame_count > 0) {
+        LogPrintf("[内核] %d 帧完成\n", frame_count);
+    } else {
+        LogPrintf("[内核] 无限模式结束\n");
+    }
     Cleanup(states, kDllCount);
     return 0;
 #else

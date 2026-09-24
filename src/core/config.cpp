@@ -60,7 +60,7 @@ bool ParseFrames(const std::string& value, int* out, std::string* err) {
             break;
         }
     }
-    if (parsed < 1 || parsed > 100000) {
+    if (parsed < 0 || parsed > 100000) {
         *err = "frames 超出范围: " + value;
         return false;
     }
