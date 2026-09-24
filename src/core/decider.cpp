@@ -24,7 +24,7 @@ int RandPressDuration() {
 enum class VerifyState {
     IDLE, PRESS_RIGHT, WAIT_AFTER_RIGHT,
     PRESS_LEFT, WAIT_AFTER_LEFT,
-    ANALYZE, GIVE_UP
+    ANALYZE
 };
 
 struct VerifySample {
@@ -133,6 +133,7 @@ struct Decider::Impl {
     unsigned long long verify_start = 0;
     unsigned long long press_duration = 200;
     int verify_retry = 0;
+    unsigned long long verify_cooldown_until = 0;
     VerifySample sample_t0, sample_t1, sample_t2;
 
     static constexpr float kLockRange = 0.05f;
@@ -143,6 +144,7 @@ struct Decider::Impl {
     static constexpr float kDxThresh = 0.01f;
     static constexpr float kMaxMatchDist = 0.30f;
     static constexpr int kMaxRetry = 3;
+    static constexpr unsigned long long kVerifyCooldownMs = 30000;
 };
 
 Decider::Decider() : impl_(new Impl()) {
@@ -254,14 +256,18 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
                     impl_->lock_fy = w2.cy + w2.h * 0.5f;
                     impl_->lost_since = 0;
                     impl_->verify_retry = 0;
+                    impl_->verify_cooldown_until = 0;
                     impl_->verify_state = VerifyState::IDLE;
                     std::fprintf(stdout, "[decider] verify 成功锁定 id=%d\n",
                                  impl_->lock_id);
                 } else {
                     impl_->verify_retry++;
                     if (impl_->verify_retry >= Impl::kMaxRetry) {
-                        impl_->verify_state = VerifyState::GIVE_UP;
-                        std::fprintf(stdout, "[decider] verify 3 次失败，放弃\n");
+                        impl_->verify_state = VerifyState::IDLE;
+                        impl_->verify_retry = 0;
+                        impl_->verify_cooldown_until = GetTickCount64() + Impl::kVerifyCooldownMs;
+                        std::fprintf(stdout, "[decider] verify 3 次失败，冷却 %llu ms\n",
+                                     (unsigned long long)Impl::kVerifyCooldownMs);
                     } else {
                         impl_->verify_state = VerifyState::PRESS_RIGHT;
                         impl_->verify_start = now;
@@ -274,8 +280,11 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             } else {
                 impl_->verify_retry++;
                 if (impl_->verify_retry >= Impl::kMaxRetry) {
-                    impl_->verify_state = VerifyState::GIVE_UP;
-                    std::fprintf(stdout, "[decider] verify 3 次失败，放弃\n");
+                    impl_->verify_state = VerifyState::IDLE;
+                    impl_->verify_retry = 0;
+                    impl_->verify_cooldown_until = GetTickCount64() + Impl::kVerifyCooldownMs;
+                    std::fprintf(stdout, "[decider] verify 3 次失败，冷却 %llu ms\n",
+                                 (unsigned long long)Impl::kVerifyCooldownMs);
                 } else {
                     impl_->verify_state = VerifyState::PRESS_RIGHT;
                     impl_->verify_start = now;
@@ -287,9 +296,6 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             }
             break;
         }
-        case VerifyState::GIVE_UP:
-            out->out_count = 0;
-            break;
         default:
             break;
         }
@@ -329,6 +335,8 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
                 impl_->lock_fx = cands[0].fx;
                 impl_->lock_fy = cands[0].fy;
                 impl_->lost_since = 0;
+                impl_->verify_cooldown_until = 0;
+                impl_->verify_retry = 0;
                 std::fprintf(stdout, "[decider] me_lock: id=%d fx=%.3f fy=%.3f (unique, dp=%.3f)\n",
                              impl_->lock_id, impl_->lock_fx, impl_->lock_fy, dp);
             } else {
@@ -339,6 +347,15 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             return;
         }
         // 多候选，触发验证
+        {
+            const unsigned long long now_ms = GetTickCount64();
+            if (now_ms < impl_->verify_cooldown_until) {
+                std::fprintf(stdout, "[decider] me_lock: none (cooldown %llu ms left)\n",
+                             (unsigned long long)(impl_->verify_cooldown_until - now_ms));
+                std::fprintf(stdout, "[decider] decision: out_count=0\n");
+                return;
+            }
+        }
         impl_->verify_state = VerifyState::PRESS_RIGHT;
         impl_->verify_start = now;
         impl_->press_duration = RandPressDuration();
@@ -364,6 +381,8 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
             impl_->lock_fx = matched->fx;
             impl_->lock_fy = matched->fy;
             impl_->lost_since = 0;
+            impl_->verify_cooldown_until = 0;
+            impl_->verify_retry = 0;
             std::fprintf(stdout, "[decider] me_lock: id=%d fx=%.3f fy=%.3f\n",
                          impl_->lock_id, impl_->lock_fx, impl_->lock_fy);
             finish();
