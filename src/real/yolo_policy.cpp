@@ -4,6 +4,7 @@
 #include <dml_provider_factory.h>
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <cstdio>
@@ -13,6 +14,7 @@ static Ort::Session* g_session = nullptr;
 static std::string g_model_path;
 static std::string g_input_name;
 static std::string g_output_name;
+static uint64_t g_last_input_hash = 0;
 
 static std::wstring ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -141,11 +143,23 @@ static void PrintOutputStats(const float* data, size_t count)
     std::fprintf(stderr, "\n");
 }
 
+static uint64_t ComputeTensorHash(const std::vector<float>& tensor) {
+    uint64_t hash = 1469598103934665603ULL;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(tensor.data());
+    const size_t n = tensor.size() * sizeof(float);
+    for (size_t i = 0; i < n; i += 64) {
+        hash ^= p[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
 struct Detection {
     int cls;
     float conf;
     float cx, cy;
     float w, h;
+    int track_id = 0;
 };
 
 static float IoU(const Detection& a, const Detection& b) {
@@ -170,6 +184,79 @@ static float IoU(const Detection& a, const Detection& b) {
     if (uni <= 0.0f) return 0.0f;
     return inter / uni;
 }
+
+struct Track {
+    int id = 0;
+    int cls = 0;
+    float cx = 0, cy = 0, w = 0, h = 0;
+    int lost_frames = 0;
+    int age = 0;
+};
+
+static float IoU(const Track& t, const Detection& d) {
+    const float t_x1 = t.cx - t.w / 2, t_y1 = t.cy - t.h / 2;
+    const float t_x2 = t.cx + t.w / 2, t_y2 = t.cy + t.h / 2;
+    const float d_x1 = d.cx - d.w / 2, d_y1 = d.cy - d.h / 2;
+    const float d_x2 = d.cx + d.w / 2, d_y2 = d.cy + d.h / 2;
+    const float ix1 = (std::max)(t_x1, d_x1);
+    const float iy1 = (std::max)(t_y1, d_y1);
+    const float ix2 = (std::min)(t_x2, d_x2);
+    const float iy2 = (std::min)(t_y2, d_y2);
+    const float iw = ix2 - ix1;
+    const float ih = iy2 - iy1;
+    if (iw <= 0 || ih <= 0) return 0.0f;
+    const float inter = iw * ih;
+    const float area_t = t.w * t.h;
+    const float area_d = d.w * d.h;
+    return inter / (area_t + area_d - inter + 1e-6f);
+}
+
+class Tracker {
+public:
+    void Update(std::vector<Detection>& dets) {
+        for (auto& t : tracks_) t.lost_frames += 1;
+
+        for (auto& d : dets) {
+            int best_idx = -1;
+            float best_iou = 0.3f;
+            for (size_t i = 0; i < tracks_.size(); ++i) {
+                if (tracks_[i].cls != d.cls) continue;
+                const float iou = IoU(tracks_[i], d);
+                if (iou > best_iou) {
+                    best_iou = iou;
+                    best_idx = (int)i;
+                }
+            }
+            if (best_idx >= 0) {
+                auto& t = tracks_[best_idx];
+                t.cx = d.cx; t.cy = d.cy; t.w = d.w; t.h = d.h;
+                t.lost_frames = 0;
+                t.age += 1;
+                d.track_id = t.id;
+            } else {
+                Track t;
+                t.id = next_id_++;
+                t.cls = d.cls;
+                t.cx = d.cx; t.cy = d.cy; t.w = d.w; t.h = d.h;
+                t.lost_frames = 0;
+                t.age = 1;
+                tracks_.push_back(t);
+                d.track_id = t.id;
+            }
+        }
+
+        tracks_.erase(
+            std::remove_if(tracks_.begin(), tracks_.end(),
+                [](const Track& t) { return t.lost_frames > 30; }),
+            tracks_.end());
+    }
+
+private:
+    std::vector<Track> tracks_;
+    int next_id_ = 1;
+};
+
+static Tracker g_tracker;
 
 static void PostprocessDetections(
     const float* out_data,
@@ -215,6 +302,10 @@ static void PostprocessDetections(
         d.h  = h_orig  / orig_h;
 
         if (d.cx < 0 || d.cx > 1 || d.cy < 0 || d.cy > 1) continue;
+
+        const float min_px = 30.0f / 640.0f;
+        if (d.w < min_px && d.h < min_px) continue;
+
         candidates.push_back(d);
     }
 
@@ -362,6 +453,13 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
     std::fprintf(stderr, "[yolo] frame: %ux%u stride=%u pts_ms=%lld\n",
                  f->width, f->height, f->stride, (long long)f->pts_ms);
 
+    const uint64_t h = ComputeTensorHash(input_tensor);
+    if (h == g_last_input_hash) {
+        std::fprintf(stderr, "[yolo] 输入帧重复，跳过推理\n");
+        return CORE_OK;
+    }
+    g_last_input_hash = h;
+
     PrintInputStats(input_tensor);
 
     const std::array<int64_t, 4> input_shape = { 1, 3, kInputSize, kInputSize };
@@ -412,11 +510,13 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
                 f->width, f->height,
                 detections);
 
+            g_tracker.Update(detections);
+
             std::fprintf(stderr, "[yolo] 检测到 %zu 个目标\n", detections.size());
             for (const auto& d : detections) {
                 const char* name = (d.cls == 0) ? "me" : (d.cls == 1) ? "monster" : "?";
-                std::fprintf(stderr, "[yolo]   %s conf=%.3f cx=%.3f cy=%.3f w=%.3f h=%.3f\n",
-                             name, d.conf, d.cx, d.cy, d.w, d.h);
+                std::fprintf(stderr, "[yolo]   %s id=%d conf=%.3f cx=%.3f cy=%.3f w=%.3f h=%.3f\n",
+                             name, d.track_id, d.conf, d.cx, d.cy, d.w, d.h);
             }
         }
     }
