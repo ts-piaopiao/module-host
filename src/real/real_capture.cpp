@@ -489,9 +489,25 @@ core_error plugin_capture(core_frame* out) {
     if (data == nullptr || curLen == 0) {
         result = CORE_ERR_CAPTURE;
     } else {
-        const size_t copyLen = (static_cast<size_t>(curLen) < need) ? static_cast<size_t>(curLen) : need;
-        std::memcpy(g_frame_buf.data(), data, copyLen);
-        for (size_t i = 3; i < copyLen; i += 4) {
+        // 按行拷贝，忽略每行尾部对齐填充，避免错位出现黑色斜线
+        UINT32 src_stride = g_out_width * 4u;
+        if (curLen > need && (curLen % g_out_height) == 0) {
+            const UINT32 s = static_cast<UINT32>(curLen / g_out_height);
+            if (s >= g_out_width * 4u && (s % 4u) == 0) {
+                src_stride = s;
+            }
+        }
+        const size_t row_bytes = static_cast<size_t>(g_out_width) * 4u;
+        const size_t rows_available = static_cast<size_t>(curLen) / src_stride;
+        const UINT32 rows = (rows_available < g_out_height)
+                                ? static_cast<UINT32>(rows_available)
+                                : g_out_height;
+        for (UINT32 y = 0; y < rows; ++y) {
+            std::memcpy(g_frame_buf.data() + static_cast<size_t>(y) * row_bytes,
+                        data + static_cast<size_t>(y) * src_stride,
+                        row_bytes);
+        }
+        for (size_t i = 3; i < need; i += 4) {
             g_frame_buf[i] = 0xFF;
         }
 

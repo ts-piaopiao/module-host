@@ -146,8 +146,9 @@ struct RemoteServer::Impl {
                 last_heartbeat = now;
             }
 
-            // 先收后发：有帧时先查可写，可写才编码+send，不可写则丢帧，
-            // 避免阻塞 send 卡住循环导致 recv 轮不到。
+            // 先收后发：每轮最多发 1 帧，发完立刻回到收，降低输入延迟。
+            // 有帧时读超时 0，否则 10ms 轮询新帧。
+            bool frames_remain = false;
             {
                 FrameSnapshot snap;
                 bool has_frame = false;
@@ -157,6 +158,7 @@ struct RemoteServer::Impl {
                         snap = std::move(frame_queue.front());
                         frame_queue.pop_front();
                         has_frame = true;
+                        frames_remain = !frame_queue.empty();
                     }
                 }
                 if (has_frame) {
@@ -190,7 +192,7 @@ struct RemoteServer::Impl {
                             }
                         }
                     }
-                    // writable <= 0：丢弃这帧，不编码，不 send
+                    // writable <= 0：丢弃这帧
                 }
             }
 
@@ -199,7 +201,7 @@ struct RemoteServer::Impl {
             FD_SET(client_socket, &read_fds);
             timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = 500 * 1000;
+            tv.tv_usec = frames_remain ? 0 : 10 * 1000;  // 有帧不睡，空闲 10ms 轮询
             const int sel = select(0, &read_fds, nullptr, nullptr, &tv);
             if (stop_flag.load()) {
                 return;
@@ -217,7 +219,12 @@ struct RemoteServer::Impl {
             }
 
             rx_buf.insert(rx_buf.end(), buf, buf + n);
+            if (rx_buf.size() > (1u << 20)) {
+                rx_buf.clear();
+                return;
+            }
 
+            // 上行事件可能一帧内积压多条（鼠标移动），及时消费避免阻塞到下一帧
             while (rx_buf.size() >= 8) {
                 const uint32_t len = ReadU32BE(rx_buf.data());
                 if (len < 4 || len > 65536) {
@@ -365,9 +372,8 @@ void RemoteServer::PushFrame(const uint8_t* bgra, uint32_t width, uint32_t heigh
         return;
     }
     std::lock_guard<std::mutex> lk(impl_->frame_mutex);
-    if (impl_->frame_queue.size() >= 2) {
-        impl_->frame_queue.pop_front();
-    }
+    // 只保留最新一帧，降低端到端延迟
+    impl_->frame_queue.clear();
     FrameSnapshot snap;
     snap.width = width;
     snap.height = height;

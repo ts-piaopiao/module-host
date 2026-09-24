@@ -211,10 +211,19 @@ bool IsHumanWindowActive(const std::set<int32_t>& pressed_keys,
 
 // 把 events 组装成 core_decision。
 // 超过 CORE_DECISION_CAPACITY 的部分丢弃。
+// 连续 POINTER_MOVE 合并为一条（dx/dy 累加），降低鼠标移动超容丢事件。
 void BuildHumanDecision(const std::vector<core_action>& events,
                         core_decision* out) {
     out->out_count = 0;
     for (const core_action& act : events) {
+        if (act.kind == CORE_ACTION_POINTER_MOVE && out->out_count > 0) {
+            core_action& prev = out->actions[out->out_count - 1];
+            if (prev.kind == CORE_ACTION_POINTER_MOVE) {
+                prev.a += act.a;
+                prev.b += act.b;
+                continue;
+            }
+        }
         if (out->out_count >= CORE_DECISION_CAPACITY) {
             break;
         }
@@ -405,8 +414,10 @@ int main(int argc, char* argv[]) {
         if (remote) {
             events = remote->PopHumanEvents();
         }
-        for (const core_action& act : events) {
+        if (!events.empty()) {
             t_last_event = GetTickCount64();
+        }
+        for (const core_action& act : events) {
             if (act.kind == CORE_ACTION_KEY) {
                 if (act.b == 1) {
                     pressed_keys.insert(act.a);
