@@ -27,6 +27,9 @@ struct Combat::Impl {
         bool alive = true;
     };
 
+    CombatState state = CombatState::IDLE;
+    unsigned long long state_since = 0;
+
     std::vector<TrackedMonster> monsters;
 
     // 参数（归一化）
@@ -52,6 +55,16 @@ struct Combat::Impl {
     // 按键状态
     int active_dir_key = 0;
     bool active_e = false;
+
+    static bool IsInBand(const TrackedMonster& m, float me_fx, float me_fy) {
+        const float dxs = std::fabs(m.cx - me_fx);
+        const float dys = m.cy - me_fy;
+        const bool on_same = std::fabs(dys) <= kSamePlatY;
+        const float x_max = on_same ? kAtkMax : kAtkCross;
+        const float m_top = m.cy - m.h;
+        return (dxs >= kAtkMin && dxs <= x_max &&
+                dys >= -kAtkVUp && m_top <= me_fy + kAtkVDown);
+    }
 };
 
 Combat::Combat() : impl_(new Impl()) {}
@@ -215,40 +228,62 @@ void Combat::Update(bool me_valid, float me_fx, float me_fy,
         impl_->target_lost_since = 0;
     }
 
-    // 4. 决定按键
-    int desired_dir = 0;
-    bool desired_e = false;
-    if (chosen != nullptr) {
-        impl_->has_target = true;
-        impl_->target_cx = chosen->cx;
-        impl_->target_cy = chosen->cy;
-        impl_->target_w = chosen->w;
-        impl_->target_h = chosen->h;
+    // 4. 状态迁移（10a：IDLE / CHASE / ATTACK，行为与 v4 等价）
+    const bool in_band = (chosen != nullptr) && Impl::IsInBand(*chosen, me_fx, me_fy);
 
-        const float dxs = std::fabs(chosen->cx - me_fx);
-        const float dys = chosen->cy - me_fy;
-        const bool on_same = std::fabs(dys) <= Impl::kSamePlatY;
-        const float x_max = on_same ? Impl::kAtkMax : Impl::kAtkCross;
-        const float m_top = chosen->cy - chosen->h;
-        const bool in_band =
-            (dxs >= Impl::kAtkMin && dxs <= x_max &&
-             dys >= -Impl::kAtkVUp && m_top <= me_fy + Impl::kAtkVDown);
-
-        if (in_band) {
-            desired_dir = 0;
-            desired_e = true;
-        } else {
-            const float dx_signed = chosen->cx - me_fx;
-            desired_dir = (dx_signed > 0) ? 0x27 : 0x25;
-            desired_e = false;
+    switch (impl_->state) {
+    case CombatState::IDLE:
+        if (chosen != nullptr) {
+            impl_->state = in_band ? CombatState::ATTACK : CombatState::CHASE;
+            impl_->state_since = now;
         }
-    } else {
-        impl_->has_target = false;
-        desired_dir = 0;
-        desired_e = false;
+        break;
+    case CombatState::CHASE:
+        if (chosen == nullptr) {
+            if (!impl_->has_target) {
+                impl_->state = CombatState::IDLE;
+                impl_->state_since = now;
+            }
+        } else if (in_band) {
+            impl_->state = CombatState::ATTACK;
+            impl_->state_since = now;
+        }
+        break;
+    case CombatState::ATTACK:
+        if (chosen == nullptr) {
+            if (!impl_->has_target) {
+                impl_->state = CombatState::IDLE;
+                impl_->state_since = now;
+            }
+        } else if (!in_band) {
+            impl_->state = CombatState::CHASE;
+            impl_->state_since = now;
+        }
+        break;
     }
 
-    // 5. 按键状态机
+    // 5. 按键输出（差分）
+    int desired_dir = 0;
+    bool desired_e = false;
+
+    switch (impl_->state) {
+    case CombatState::IDLE:
+        desired_dir = 0;
+        desired_e = false;
+        break;
+    case CombatState::CHASE:
+        if (chosen != nullptr) {
+            const float dx_signed = chosen->cx - me_fx;
+            desired_dir = (dx_signed > 0) ? 0x27 : 0x25;
+        }
+        desired_e = false;
+        break;
+    case CombatState::ATTACK:
+        desired_dir = 0;
+        desired_e = true;
+        break;
+    }
+
     if (impl_->active_dir_key != desired_dir) {
         if (impl_->active_dir_key != 0) {
             PushKey(out, impl_->active_dir_key, 0);

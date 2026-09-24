@@ -21,6 +21,12 @@ public:
     void ReleaseAll(core_decision* out);
 
 private:
+    enum class CombatState {
+        IDLE,
+        CHASE,
+        ATTACK
+    };
+
     struct Impl;
     Impl* impl_;
 };
