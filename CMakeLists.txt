@@ -11,9 +11,9 @@ option(BUILD_STAGE2_PLUGINS "Build stage2 plugins" OFF)
 
 set(ONNXRUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
 
-add_executable(module_host_core src/core/main.cpp src/core/config.cpp src/core/remote_server.cpp src/core/jpeg_encoder.cpp src/core/decider.cpp src/core/combat.cpp)
+add_executable(module_host_core src/core/main.cpp src/core/config.cpp src/core/remote_server.cpp src/core/jpeg_encoder.cpp src/core/decider.cpp src/core/combat.cpp src/core/recorder.cpp)
 set_target_properties(module_host_core PROPERTIES OUTPUT_NAME core)
-target_include_directories(module_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(module_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 target_compile_options(module_host_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 target_link_libraries(module_host_core PRIVATE ws2_32 windowscodecs shlwapi ole32)
 if(BUILD_STAGE2_PLUGINS)
