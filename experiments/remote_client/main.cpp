@@ -7,6 +7,7 @@
 #include <wincodec.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <imm.h>
 
 #include <algorithm>
 #include <atomic>
@@ -580,6 +581,9 @@ int main(int argc, char** argv) {
         WSACleanup();
         return 1;
     }
+
+    // 客户端无文本输入，永久禁用 IME，避免输入法拦截快捷键
+    ImmAssociateContext(hwnd, nullptr);
 
     SetTimer(hwnd, 1, 1000, nullptr);
     ShowWindow(hwnd, SW_SHOW);

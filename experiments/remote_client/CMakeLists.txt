@@ -15,4 +15,5 @@ target_link_libraries(remote_client PRIVATE
     ole32.lib
     user32.lib
     gdi32.lib
+    imm32.lib
 )
