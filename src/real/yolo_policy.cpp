@@ -4,6 +4,7 @@
 #include <dml_provider_factory.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -258,6 +259,103 @@ private:
 
 static Tracker g_tracker;
 
+namespace {
+
+class MeLock {
+public:
+    // 传入所有 cls=0 且带 track_id 的检测框。
+    // 返回锁定的 track_id，未锁返回 -1。
+    int Update(const std::vector<Detection>& cands);
+
+    float GetLockPx() const { return lock_px_; }
+    float GetLockPy() const { return lock_py_; }
+
+private:
+    int lock_id_ = -1;
+    float lock_px_ = 0.5f;
+    float lock_py_ = 0.72f;
+    ULONGLONG lost_since_ = 0;
+
+    static constexpr float kLockRange = 0.05f;    // 约 100px/1920
+    static constexpr float kPriorX = 0.5f;
+    static constexpr float kPriorY = 0.72f;
+    static constexpr ULONGLONG kRelockMs = 1000;  // 保护期 1000ms
+};
+
+int MeLock::Update(const std::vector<Detection>& cands) {
+    const ULONGLONG now = GetTickCount64();
+
+    struct C { int id; float fx, fy; };
+    std::vector<C> items;
+    items.reserve(cands.size());
+    for (const auto& d : cands) {
+        // 脚底中心：x = cx，y = cy + h/2
+        items.push_back({ d.track_id, d.cx, d.cy + d.h * 0.5f });
+    }
+
+    // 无锁：选距先验最近的
+    if (lock_id_ < 0) {
+        if (items.empty()) return -1;
+        float best = 1e9f;
+        int best_id = -1;
+        float best_fx = 0, best_fy = 0;
+        for (const auto& it : items) {
+            const float dx = it.fx - kPriorX;
+            const float dy = it.fy - kPriorY;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist < best) {
+                best = dist;
+                best_id = it.id;
+                best_fx = it.fx;
+                best_fy = it.fy;
+            }
+        }
+        if (best_id >= 0) {
+            lock_id_ = best_id;
+            lock_px_ = best_fx;
+            lock_py_ = best_fy;
+            lost_since_ = 0;
+        }
+        return lock_id_;
+    }
+
+    // 有锁：找 lock_id_ 的候选
+    const C* matched = nullptr;
+    for (const auto& it : items) {
+        if (it.id == lock_id_) {
+            matched = &it;
+            break;
+        }
+    }
+
+    if (matched != nullptr) {
+        const float dx = matched->fx - lock_px_;
+        const float dy = matched->fy - lock_py_;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist <= kLockRange) {
+            lock_px_ = matched->fx;
+            lock_py_ = matched->fy;
+            lost_since_ = 0;
+            return lock_id_;
+        }
+    }
+
+    // 未匹配 / 圈外：进入保护期
+    if (lost_since_ == 0) {
+        lost_since_ = now;
+    }
+    if (now - lost_since_ >= kRelockMs) {
+        lock_id_ = -1;
+        lost_since_ = 0;
+        return Update(cands);  // 保护期到，重选
+    }
+    return -1;  // 保护期内，无有效 me
+}
+
+MeLock g_me_lock;
+
+}  // namespace
+
 static void PostprocessDetections(
     const float* out_data,
     size_t num_classes,
@@ -511,6 +609,19 @@ core_error plugin_decide(const core_intent* intent, core_decision* out) {
                 detections);
 
             g_tracker.Update(detections);
+
+            // 收集 cls=0
+            std::vector<Detection> me_cands;
+            for (const auto& d : detections) {
+                if (d.cls == 0) me_cands.push_back(d);
+            }
+            const int me_id = g_me_lock.Update(me_cands);
+            if (me_id >= 0) {
+                std::fprintf(stderr, "[yolo] me_lock: id=%d fx=%.3f fy=%.3f\n",
+                             me_id, g_me_lock.GetLockPx(), g_me_lock.GetLockPy());
+            } else {
+                std::fprintf(stderr, "[yolo] me_lock: none (保护期内)\n");
+            }
 
             std::fprintf(stderr, "[yolo] 检测到 %zu 个目标\n", detections.size());
             for (const auto& d : detections) {
