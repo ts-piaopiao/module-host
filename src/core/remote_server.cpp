@@ -7,6 +7,7 @@
 
 #include "remote_server.h"
 #include "jpeg_encoder.h"
+#include "output_manager.h"
 
 #include <atomic>
 #include <chrono>
@@ -54,6 +55,8 @@ struct RemoteServer::Impl {
 
     std::mutex human_mutex;
     std::deque<core_action> human_queue;
+
+    OutputManager* output_sink = nullptr;
 
     int jpeg_quality = 80;
     JpegEncoder encoder;
@@ -268,12 +271,31 @@ struct RemoteServer::Impl {
                     action.b = (down != 0) ? 1 : 0;
                     action.c = 0;
                     valid = true;
+                } else if (type == 4 && payload_len == 4) {
+                    // 控制模式：int32 on (0=退出, 1=进入)
+                    const int32_t on = static_cast<int32_t>(ReadU32BE(payload));
+                    OutputManager* sink = nullptr;
+                    {
+                        std::lock_guard<std::mutex> lk(human_mutex);
+                        sink = this->output_sink;
+                    }
+                    if (sink != nullptr) {
+                        sink->SetScriptPaused(on != 0);
+                        std::fprintf(stderr, "[remote] 控制模式: %s\n", on ? "on" : "off");
+                    }
+                    valid = true;  // 不入 human_queue，仅触发控制模式
                 }
                 // 其他类型（例如心跳）直接忽略，不报错
 
                 if (valid) {
                     std::lock_guard<std::mutex> lk(human_mutex);
                     human_queue.push_back(action);
+
+                    // 新增：如果 output_sink 非空，立即直通发送
+                    OutputManager* sink = this->output_sink;
+                    if (sink != nullptr) {
+                        sink->SendAsync(&action);
+                    }
                 }
 
                 // 消费掉这条消息
@@ -352,6 +374,11 @@ void RemoteServer::Stop() {
         impl_->wsa_started = false;
     }
     impl_->started = false;
+}
+
+void RemoteServer::SetOutputSink(OutputManager* output) {
+    std::lock_guard<std::mutex> lk(impl_->human_mutex);
+    impl_->output_sink = output;
 }
 
 std::vector<core_action> RemoteServer::PopHumanEvents() {

@@ -198,41 +198,6 @@ bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string*
     return true;
 }
 
-bool IsHumanWindowActive(const std::set<int32_t>& pressed_keys,
-                          const std::set<int32_t>& pressed_buttons,
-                          ULONGLONG t_last_event) {
-    if (!pressed_keys.empty() || !pressed_buttons.empty()) {
-        return true;
-    }
-    if (t_last_event == 0) {
-        return false;
-    }
-    return (GetTickCount64() - t_last_event) < 500;
-}
-
-// 把 events 组装成 core_decision。
-// 超过 CORE_DECISION_CAPACITY 的部分丢弃。
-// 连续 POINTER_MOVE 合并为一条（dx/dy 累加），降低鼠标移动超容丢事件。
-void BuildHumanDecision(const std::vector<core_action>& events,
-                        core_decision* out) {
-    out->out_count = 0;
-    for (const core_action& act : events) {
-        if (act.kind == CORE_ACTION_POINTER_MOVE && out->out_count > 0) {
-            core_action& prev = out->actions[out->out_count - 1];
-            if (prev.kind == CORE_ACTION_POINTER_MOVE) {
-                prev.a += act.a;
-                prev.b += act.b;
-                continue;
-            }
-        }
-        if (out->out_count >= CORE_DECISION_CAPACITY) {
-            break;
-        }
-        out->actions[out->out_count] = act;
-        out->out_count++;
-    }
-}
-
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -420,9 +385,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::set<int32_t> pressed_keys;
-    std::set<int32_t> pressed_buttons;
-    ULONGLONG t_last_event = 0;
+    // 远程输出直通 OutputManager
+    if (remote) {
+        remote->SetOutputSink(&output_manager);
+    }
 
     int frame_index = 0;
     for (;;) {
@@ -478,27 +444,10 @@ int main(int argc, char* argv[]) {
                                      &decision_decided);
         }
 
+        // 人类事件只用于 recorder 记录（不回灌到 decision）
         std::vector<core_action> events;
         if (remote) {
             events = remote->PopHumanEvents();
-        }
-        if (!events.empty()) {
-            t_last_event = GetTickCount64();
-        }
-        for (const core_action& act : events) {
-            if (act.kind == CORE_ACTION_KEY) {
-                if (act.b == 1) {
-                    pressed_keys.insert(act.a);
-                } else {
-                    pressed_keys.erase(act.a);
-                }
-            } else if (act.kind == CORE_ACTION_POINTER_BUTTON) {
-                if (act.b == 1) {
-                    pressed_buttons.insert(act.a);
-                } else {
-                    pressed_buttons.erase(act.a);
-                }
-            }
         }
 
         if (recorder) {
@@ -507,24 +456,12 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        const bool human_active = IsHumanWindowActive(pressed_keys, pressed_buttons, t_last_event);
+        // 脚本决策直接走 SendScript（human 走 SendAsync，两条独立路径）
+        output_manager.SendScript(&decision_decided);
 
-        core_decision final_decision = {};
-        if (human_active) {
-            BuildHumanDecision(events, &final_decision);
-            if (!events.empty()) {
-                LogPrintf("[内核] 人工覆盖: %d 个动作\n", static_cast<int>(events.size()));
-            }
-        } else {
-            final_decision = decision_decided;   // 从 decision_policy 改为 decision_decided
-        }
-
-        if (final_decision.out_count == 0) {
+        if (decision_decided.out_count == 0) {
             LogPrintf("[内核] 无意图\n");
         }
-
-        // 走 OutputManager，不走 input 插件的 plugin_execute
-        output_manager.SendScript(&final_decision);
     }
 
     if (frame_count > 0) {

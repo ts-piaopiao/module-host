@@ -87,6 +87,11 @@ bool SendMsg(uint32_t type, uint32_t a, uint32_t b) {
     return true;
 }
 
+bool SendControlMode(uint32_t on) {
+    // type=4 = ControlMode, payload: int32 on
+    return SendMsg(4, on, 0);
+}
+
 bool SendKeyboard(uint32_t vk, uint32_t down) {
     return SendMsg(1, vk, down);
 }
@@ -296,9 +301,13 @@ void SetControlMode(HWND hwnd, bool enable) {
         RecomputeCenter(hwnd);
         SetCursorPos(g_center_screen_x, g_center_screen_y);
         ShowCursor(FALSE);
+        // 新增：通知服务端进入控制模式
+        SendControlMode(1);
     } else {
         ReleaseCapture();
         ShowCursor(TRUE);
+        // 新增：通知服务端退出控制模式
+        SendControlMode(0);
     }
     UpdateTitleFps(hwnd);
 }

@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <vector>
 
+class OutputManager;
+
 class RemoteServer {
 public:
     RemoteServer();
@@ -22,6 +24,10 @@ public:
     // 若队列为空，返回空 vector。
     // 调用后队列清空。
     std::vector<core_action> PopHumanEvents();
+
+    // 设置输出通道。remote_server 收到 human 事件后直接调 output->SendAsync。
+    // 传 nullptr 表示不直通（仅入队）。
+    void SetOutputSink(OutputManager* output);
 
 private:
     struct Impl;
