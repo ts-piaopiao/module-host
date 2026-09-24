@@ -6,6 +6,10 @@
 struct CppScript::Impl {
     uint64_t last_log_frame = 0;
     bool inited = false;
+    int active_key = 0;
+    int pending_release = 0;
+    int last_pressed = 0;
+    uint64_t last_switch_frame = 0;
 };
 
 CppScript::CppScript() : impl_(new Impl()) {}
@@ -19,6 +23,23 @@ bool CppScript::Init(const std::string& config) {
 }
 
 void CppScript::OnFrame(const ScriptWorld& world) {
+    if (impl_->last_switch_frame == 0) {
+        impl_->last_switch_frame = world.frame_index;
+        impl_->active_key = 0x27;
+        std::printf("[script] 初始方向: 右\n");
+        std::fflush(stdout);
+    }
+
+    if (world.frame_index - impl_->last_switch_frame >= 120) {
+        impl_->last_switch_frame = world.frame_index;
+        impl_->pending_release = impl_->active_key;
+        impl_->active_key = (impl_->active_key == 0x27) ? 0x25 : 0x27;
+        std::printf("[script] frame=%llu 切方向: %s\n",
+                    (unsigned long long)world.frame_index,
+                    impl_->active_key == 0x27 ? "右" : "左");
+        std::fflush(stdout);
+    }
+
     if (world.frame_index - impl_->last_log_frame < 30) return;
     impl_->last_log_frame = world.frame_index;
 
@@ -63,7 +84,29 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 }
 
 void CppScript::GetDecision(core_decision* out) {
-    out->out_count = 0;  // S1 不输出任何动作
+    out->out_count = 0;
+
+    if (impl_->pending_release != 0) {
+        if (out->out_count < CORE_DECISION_CAPACITY) {
+            out->actions[out->out_count].kind = CORE_ACTION_KEY;
+            out->actions[out->out_count].a = impl_->pending_release;
+            out->actions[out->out_count].b = 0;
+            out->actions[out->out_count].c = 0;
+            out->out_count++;
+        }
+        impl_->pending_release = 0;
+    }
+
+    if (impl_->active_key != impl_->last_pressed) {
+        if (out->out_count < CORE_DECISION_CAPACITY) {
+            out->actions[out->out_count].kind = CORE_ACTION_KEY;
+            out->actions[out->out_count].a = impl_->active_key;
+            out->actions[out->out_count].b = 1;
+            out->actions[out->out_count].c = 0;
+            out->out_count++;
+        }
+        impl_->last_pressed = impl_->active_key;
+    }
 }
 
 void CppScript::Shutdown() {
