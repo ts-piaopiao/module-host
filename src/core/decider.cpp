@@ -7,6 +7,10 @@
 
 namespace {
 
+// 临时测试开关：1 = 把 monster 也当作 me 候选（用于测试验证流程）
+// 生产环境必须为 0
+static const int kTestIncludeMonster = 0;
+
 unsigned long long NowMs() {
     return GetTickCount64();
 }
@@ -33,9 +37,10 @@ void CaptureSample(const core_detections* dets, VerifySample* s) {
     s->time = NowMs();
     if (dets != nullptr) {
         for (uint32_t i = 0; i < dets->count; ++i) {
-            if (dets->items[i].cls != 0) continue;
+            const core_detection& d = dets->items[i];
+            if (d.cls != 0 && !(kTestIncludeMonster && d.cls == 1)) continue;
             if (s->count >= CORE_MAX_DETECTIONS) break;
-            s->items[s->count++] = dets->items[i];
+            s->items[s->count++] = d;
         }
     }
     std::fprintf(stdout, "[decider] sample @%llu ms: %u 候选:\n",
@@ -267,11 +272,12 @@ void Decider::Update(const core_detections* dets, core_decision* out) {
     Cand cands[CORE_MAX_DETECTIONS];
     uint32_t cand_count = 0;
     for (uint32_t i = 0; i < dets->count; ++i) {
-        if (dets->items[i].cls != 0) continue;
+        const core_detection& d = dets->items[i];
+        if (d.cls != 0 && !(kTestIncludeMonster && d.cls == 1)) continue;
         if (cand_count >= CORE_MAX_DETECTIONS) break;
-        cands[cand_count].track_id = dets->items[i].track_id;
-        cands[cand_count].fx = dets->items[i].cx;
-        cands[cand_count].fy = dets->items[i].cy + dets->items[i].h * 0.5f;
+        cands[cand_count].track_id = d.track_id;
+        cands[cand_count].fx = d.cx;
+        cands[cand_count].fy = d.cy + d.h * 0.5f;
         cand_count++;
     }
 
