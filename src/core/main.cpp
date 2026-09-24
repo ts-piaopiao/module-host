@@ -5,6 +5,7 @@
 #include "remote_server.h"
 #include "script/script_host.h"
 #include "recorder.h"
+#include "output_manager.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -22,16 +23,14 @@ std::ofstream g_log_file;
 const char* const kDllNames[] = {
     "capture_plugin.dll",
     "policy_plugin.dll",
-    "input_plugin.dll",
 };
 
 const char* const kExpectedKinds[] = {
     "capture",
     "policy",
-    "input",
 };
 
-constexpr int kDllCount = 3;
+constexpr int kDllCount = 2;
 
 const char* const kSymbolNames[] = {
     "plugin_meta",
@@ -359,6 +358,13 @@ int main(int argc, char* argv[]) {
         LogPrintf("[内核] 远程监听: 端口 %d\n", config.remote_port);
     }
 
+    OutputManager output_manager;
+    if (!output_manager.Start(raw_config)) {
+        LogPrintf("[错误] 串口打开失败\n");
+        return 1;
+    }
+    LogPrintf("[内核] 输出已启动\n");
+
     PluginState states[kDllCount] = {};
 
     for (int i = 0; i < kDllCount; ++i) {
@@ -517,13 +523,8 @@ int main(int argc, char* argv[]) {
             LogPrintf("[内核] 无意图\n");
         }
 
-        core_execute_result exec_result = {};
-        if (states[2].execute(&final_decision, &exec_result) != CORE_OK ||
-            exec_result.status != CORE_OK) {
-            LogPrintf("[错误] 执行失败\n");
-            Cleanup(states, kDllCount);
-            return 1;
-        }
+        // 走 OutputManager，不走 input 插件的 plugin_execute
+        output_manager.SendScript(&final_decision);
     }
 
     if (frame_count > 0) {
@@ -532,6 +533,7 @@ int main(int argc, char* argv[]) {
         LogPrintf("[内核] 无限模式结束\n");
     }
     script_host.Stop();
+    output_manager.Stop();
     Cleanup(states, kDllCount);
     return 0;
 #else

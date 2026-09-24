@@ -44,15 +44,6 @@ set_target_properties(stage1_stub_policy PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/stubs
 )
 
-add_library(stage1_stub_input SHARED src/stubs/stub_input.cpp)
-target_compile_definitions(stage1_stub_input PRIVATE CORE_BUILDING_PLUGIN)
-target_include_directories(stage1_stub_input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(stage1_stub_input PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
-set_target_properties(stage1_stub_input PROPERTIES
-    OUTPUT_NAME input_plugin
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/stubs
-)
-
 add_library(bad_missing_symbol_capture SHARED src/bad_plugins/missing_symbol_capture.cpp)
 target_compile_definitions(bad_missing_symbol_capture PRIVATE CORE_BUILDING_PLUGIN)
 target_include_directories(bad_missing_symbol_capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -69,15 +60,6 @@ target_compile_options(bad_missing_symbol_policy PRIVATE $<$<CXX_COMPILER_ID:MSV
 set_target_properties(bad_missing_symbol_policy PROPERTIES
     OUTPUT_NAME policy_plugin
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/bad_plugins/missing_symbol_policy
-)
-
-add_library(bad_missing_symbol_input SHARED src/bad_plugins/missing_symbol_input.cpp)
-target_compile_definitions(bad_missing_symbol_input PRIVATE CORE_BUILDING_PLUGIN)
-target_include_directories(bad_missing_symbol_input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(bad_missing_symbol_input PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
-set_target_properties(bad_missing_symbol_input PROPERTIES
-    OUTPUT_NAME input_plugin
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/bad_plugins/missing_symbol_input
 )
 
 add_library(bad_abi_mismatch_capture SHARED src/bad_plugins/abi_mismatch_capture.cpp)
@@ -153,15 +135,6 @@ if(BUILD_STAGE2_PLUGINS)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins
     )
 
-    add_library(stage2_normal_input SHARED src/normal/normal_input.cpp)
-    target_compile_definitions(stage2_normal_input PRIVATE CORE_BUILDING_PLUGIN)
-    target_include_directories(stage2_normal_input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_options(stage2_normal_input PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
-    set_target_properties(stage2_normal_input PROPERTIES
-        OUTPUT_NAME input_plugin
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins
-    )
-
     add_library(rt_capture_fail SHARED src/runtime_errors/capture_fail.cpp)
     target_compile_definitions(rt_capture_fail PRIVATE CORE_BUILDING_PLUGIN)
     target_include_directories(rt_capture_fail PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -198,15 +171,6 @@ if(BUILD_STAGE2_PLUGINS)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/decide_empty
     )
 
-    add_library(rt_execute_fail SHARED src/runtime_errors/execute_fail.cpp)
-    target_compile_definitions(rt_execute_fail PRIVATE CORE_BUILDING_PLUGIN)
-    target_include_directories(rt_execute_fail PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_options(rt_execute_fail PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
-    set_target_properties(rt_execute_fail PROPERTIES
-        OUTPUT_NAME input_plugin
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/runtime_errors/execute_fail
-    )
-
     add_library(stage2_real_capture SHARED src/real/real_capture.cpp)
     target_compile_definitions(stage2_real_capture PRIVATE CORE_BUILDING_PLUGIN)
     target_include_directories(stage2_real_capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -217,15 +181,6 @@ if(BUILD_STAGE2_PLUGINS)
     )
     target_link_libraries(stage2_real_capture PRIVATE
         mfplat.lib mf.lib mfreadwrite.lib mfuuid.lib ole32.lib
-    )
-
-    add_library(stage2_real_input SHARED src/real/real_input.cpp)
-    target_compile_definitions(stage2_real_input PRIVATE CORE_BUILDING_PLUGIN)
-    target_include_directories(stage2_real_input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_options(stage2_real_input PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
-    set_target_properties(stage2_real_input PROPERTIES
-        OUTPUT_NAME input_plugin
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_real
     )
 
     add_library(stage2_test_policy SHARED src/real/test_policy.cpp)

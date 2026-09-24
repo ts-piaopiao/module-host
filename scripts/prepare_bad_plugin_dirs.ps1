@@ -52,67 +52,47 @@ function Copy-ToScenario([string]$destDir, [string]$fileName, [string]$sourcePat
 
 $captureDll = Get-StubDll 'capture'
 $policyDll = Get-StubDll 'policy'
-$inputDll = Get-StubDll 'input'
 
 $plans = @(
     @{ Name = 'missing_capture'; Files = @() }
     @{ Name = 'missing_policy'; Files = @(
-        @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
-    )}
-    @{ Name = 'missing_input'; Files = @(
-        @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
+        @{ FileName = 'capture_plugin.dll'; Source = $captureDll }
     )}
     @{ Name = 'missing_symbol_capture'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-BadDll 'missing_symbol_capture' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'missing_symbol_policy'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = (Get-BadDll 'missing_symbol_policy' 'policy_plugin.dll') },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
-    )}
-    @{ Name = 'missing_symbol_input'; Files = @(
-        @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = (Get-BadDll 'missing_symbol_input' 'input_plugin.dll') }
+        @{ FileName = 'policy_plugin.dll'; Source = (Get-BadDll 'missing_symbol_policy' 'policy_plugin.dll') }
     )}
     @{ Name = 'abi_mismatch_capture'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-BadDll 'abi_mismatch_capture' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'meta_null_capture'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-BadDll 'meta_null_capture' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'meta_seg_count_capture'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-BadDll 'meta_seg_count_capture' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'meta_abi_not_number_capture'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-BadDll 'meta_abi_not_number_capture' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'meta_kind_mismatch_capture'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-BadDll 'meta_kind_mismatch_capture' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'init_fail_capture'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-BadDll 'init_fail_capture' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'stubs'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
 )
 

@@ -46,33 +46,23 @@ function Get-RtDll([string]$scenario, [string]$name) {
 
 $captureDll = Get-NormalDll 'capture'
 $policyDll = Get-NormalDll 'policy'
-$inputDll = Get-NormalDll 'input'
 
 $plans = @(
     @{ Name = 'capture_fail'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = (Get-RtDll 'capture_fail' 'capture_plugin.dll') },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = $policyDll }
     )}
     @{ Name = 'decide_fail'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = (Get-RtDll 'decide_fail' 'policy_plugin.dll') },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = (Get-RtDll 'decide_fail' 'policy_plugin.dll') }
     )}
     @{ Name = 'decide_over_count'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = (Get-RtDll 'decide_over_count' 'policy_plugin.dll') },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
+        @{ FileName = 'policy_plugin.dll'; Source = (Get-RtDll 'decide_over_count' 'policy_plugin.dll') }
     )}
     @{ Name = 'decide_empty'; Files = @(
         @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = (Get-RtDll 'decide_empty' 'policy_plugin.dll') },
-        @{ FileName = 'input_plugin.dll'; Source = $inputDll }
-    )}
-    @{ Name = 'execute_fail'; Files = @(
-        @{ FileName = 'capture_plugin.dll'; Source = $captureDll },
-        @{ FileName = 'policy_plugin.dll'; Source = $policyDll },
-        @{ FileName = 'input_plugin.dll'; Source = (Get-RtDll 'execute_fail' 'input_plugin.dll') }
+        @{ FileName = 'policy_plugin.dll'; Source = (Get-RtDll 'decide_empty' 'policy_plugin.dll') }
     )}
 )
 

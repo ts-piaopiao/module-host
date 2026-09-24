@@ -41,10 +41,8 @@ if (-not (Test-Path -LiteralPath $coreFull)) {
 $expectations = [ordered]@{
     'missing_capture'              = @{ Keyword = '缺失 DLL: capture_plugin.dll'; ExitZero = $false }
     'missing_policy'               = @{ Keyword = '缺失 DLL: policy_plugin.dll'; ExitZero = $false }
-    'missing_input'                = @{ Keyword = '缺失 DLL: input_plugin.dll'; ExitZero = $false }
     'missing_symbol_capture'       = @{ Keyword = '缺失符号: plugin_capture'; ExitZero = $false }
     'missing_symbol_policy'        = @{ Keyword = '缺失符号: plugin_decide'; ExitZero = $false }
-    'missing_symbol_input'         = @{ Keyword = '缺失符号: plugin_execute'; ExitZero = $false }
     'abi_mismatch_capture'         = @{ Keyword = 'ABI 不匹配'; ExitZero = $false }
     'meta_null_capture'            = @{ Keyword = '元数据无效: NULL'; ExitZero = $false }
     'meta_seg_count_capture'       = @{ Keyword = '元数据无效: 段数不是 4'; ExitZero = $false }
@@ -56,7 +54,6 @@ $expectations = [ordered]@{
     'decide_fail'                  = @{ Keyword = '决策失败'; ExitZero = $false }
     'decide_over_count'            = @{ Keyword = 'out_count 违约'; ExitZero = $false }
     'decide_empty'                 = @{ Keyword = '无意图'; ExitZero = $true }
-    'execute_fail'                 = @{ Keyword = '执行失败'; ExitZero = $false }
 }
 
 function Invoke-CoreRun {
