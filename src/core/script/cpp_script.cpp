@@ -244,6 +244,7 @@ struct CppScript::Impl {
     static constexpr int kETapMsMin = 150;
     static constexpr int kETapMsMax = 300;
     static constexpr uint64_t kRecoveryMs = 850;
+    static constexpr int kAttackModeLockMs = 100;
     static constexpr int kTurnPressDelayMinMs = 100;
     static constexpr int kTurnPressDelayMaxMs = 200;
     static constexpr int kTurnKeyReleaseDelayMs = 100;
@@ -297,6 +298,10 @@ struct CppScript::Impl {
     // E 长按 (S9)
     bool e_long_hold = false;
     uint64_t e_long_hold_start_ms = 0;
+
+    // 进入 ATTACK 时定下的模式，锁定期内不随 band_count 抖动切换
+    uint64_t attack_mode_lock_until_ms = 0;  // 该时刻前不允许切换模式
+    bool attack_is_long_hold = false;        // 进入时定的模式
 
     CombatConfig cfg;
 
@@ -546,6 +551,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                             impl_->e_pressed = true;
                             impl_->current_e_tap_ms = SampleEHoldMs(impl_->cfg);
                             impl_->e_long_hold = false;
+                            // 进入时按当前带内数量定模式，100ms 内不切换
+                            const int enter_band = Impl::CountInBand(world,
+                                impl_->me.lock_fx, impl_->me.lock_fy, impl_);
+                            impl_->attack_is_long_hold = (enter_band > 1);
+                            impl_->attack_mode_lock_until_ms = now + Impl::kAttackModeLockMs;
                             std::printf("[script] E 按下时长: %d ms\n",
                                         impl_->current_e_tap_ms);
                             std::fflush(stdout);
@@ -599,7 +609,14 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 const int band_count = Impl::CountInBand(world,
                     impl_->me.lock_fx, impl_->me.lock_fy, impl_);
 
-                if (band_count > 1) {
+                // 进入 ATTACK 后 100ms 内锁定模式，避免 band_count 抖动
+                // (1→2→1) 造成长按/单击瞬间切换、E 只按几十毫秒就释放
+                const bool mode_locked = now < impl_->attack_mode_lock_until_ms;
+                const bool long_hold_mode = mode_locked
+                    ? impl_->attack_is_long_hold
+                    : (band_count > 1);
+
+                if (long_hold_mode) {
                     // 多目标：长按
                     if (!impl_->e_long_hold) {
                         impl_->e_long_hold = true;
