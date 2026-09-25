@@ -506,6 +506,8 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         impl_->turn_phase = 0;
                         impl_->turn_phase_start_ms = now;
                         impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
+                        impl_->facing = target_dir;                // 新增：与 turn_dir_key 同帧同步 facing
+                        impl_->last_dir_ms = now;                  // 新增：与 CHASE 内转向一致，重置冷却计时
                         impl_->turn_press_delay_ms =
                             Impl::kTurnPressDelayMinMs +
                             (std::rand() % (Impl::kTurnPressDelayMaxMs - Impl::kTurnPressDelayMinMs + 1));
@@ -764,4 +766,5 @@ void CppScript::GetDebugInfo(CppScriptDebugInfo* out) const {
     out->target_cx = impl_->target.cx;
     out->active_key = impl_->active_key;
     out->desired_e = impl_->desired_e;
+    out->reversing = impl_->reversing;
 }

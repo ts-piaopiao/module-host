@@ -14,7 +14,7 @@ using nlohmann::json;
 
 namespace {
 
-constexpr int kInvariantCount = 9;
+constexpr int kInvariantCount = 10;
 constexpr long long kFrameMs = 33;
 constexpr long long kMinEHoldMs = 100;
 constexpr int64_t kMinEGapMs = 800;
@@ -51,6 +51,7 @@ const char* InvariantName(int idx) {
         case 6: return "I7 state 只能是 0/1/2/3/4";
         case 7: return "I8 state 转移合法（0->1 / 1->0,1,2,3 / 2->0,2,4 / 3->0,3,4 / 4->0,1,4）";
         case 8: return "I9 KEY 动作 press/release 合法（不重复按下 / 不未按先放）";
+        case 9: return "I10 active_key 方向与 facing 一致（reversing 除外）";
         default: return "?";
     }
 }
@@ -245,6 +246,19 @@ int main(int argc, char** argv) {
         CppScriptDebugInfo dbg{};
         script.GetDebugInfo(&dbg);
 
+        // I10: active_key 方向与 facing 一致，除非正在贴脸后退（reversing）
+        if (!dbg.reversing) {
+            if (dbg.active_key == 0x27 && dbg.facing != 1) {
+                ++viol[9];
+                std::printf("[I10] 违例 frame=%llu: active_key=RIGHT 但 facing=%d\n",
+                            (unsigned long long)frame_idx, dbg.facing);
+            } else if (dbg.active_key == 0x25 && dbg.facing != -1) {
+                ++viol[9];
+                std::printf("[I10] 违例 frame=%llu: active_key=LEFT 但 facing=%d\n",
+                            (unsigned long long)frame_idx, dbg.facing);
+            }
+        }
+
         // I8: state 转移合法性（帧间检查）
         if (prev_state >= 0) {
             bool legal = false;
@@ -362,6 +376,7 @@ int main(int argc, char** argv) {
                 arr.push_back(a);
             }
             o["out"] = arr;
+            o["reversing"] = dbg.reversing ? 1 : 0;
             trace << o.dump() << '\n';
         }
 
