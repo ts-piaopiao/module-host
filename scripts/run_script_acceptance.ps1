@@ -29,7 +29,7 @@ if (-not [System.IO.Path]::IsPathRooted($FixturesDir)) {
     $FixturesDir = Join-Path $projectRoot $FixturesDir
 }
 
-$fixtures = @('real_session_600f.jsonl', 'turn_scene.jsonl')
+$fixtures = @('real_session_long.jsonl', 'real_session_600f.jsonl', 'turn_scene.jsonl')
 
 function Precheck {
     param([bool]$Ok, [string]$Message)
