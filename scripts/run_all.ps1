@@ -109,6 +109,9 @@ function Test-CoreRun {
     $args = ('--plugins-dir "{0}" --input-port none' -f $PluginsDir)
     $result = Invoke-External -FilePath $coreExe -ArgumentList $args
     $ok = $true
+    # mock 模式自检：run_all 的所有 core.exe 调用都传 --input-port none，
+    # 若输出里没有 mock 模式日志，说明 mock 分支失效（可能回退到真串口）
+    if (-not $result.Output.Contains('[output] mock 模式')) { $ok = $false }
     if ($RequireExitZero -and $result.ExitCode -ne 0) { $ok = $false }
     foreach ($kw in $Keywords) {
         if (-not $result.Output.Contains($kw)) { $ok = $false }
