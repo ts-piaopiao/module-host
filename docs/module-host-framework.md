@@ -1,5 +1,9 @@
 本文档为项目唯一权威设计文档，core_contract.h 是唯一契约。
 
+> **架构说明**：本文档早期版本按三插件设计（capture / policy / input）。
+> 实际实现已演进为两插件——input 插件移除，输入输出统一由宿主内的
+> `src/core/output_manager.cpp` 承担。本版已同步两插件现实。
+
 
 ---
 
@@ -65,7 +69,7 @@ core.exe
 1. 以 `core_contract.h` 作为唯一契约。
 2. 阶段 0 验证契约在 C11 与 C++17 下可编译。
 3. 阶段 1 验证 C++ 内核加载器与加载类错误路径。
-4. 阶段 2 验证三个假插件、正常 5 帧闭环与运行期错误路径。
+4. 阶段 2 验证两个假插件（capture / policy）、正常 5 帧闭环与运行期错误路径。
 5. 所有验收通过 PowerShell 脚本自动化完成。
 
 ---
@@ -205,7 +209,6 @@ cmake --build build --config Release
 ```text
 capture_plugin.dll
 policy_plugin.dll
-input_plugin.dll
 ```
 
 ### 错误测试桩要求
@@ -239,7 +242,7 @@ input_plugin.dll
 6. ABI 非数字。
 7. kind 不匹配。
 8. `plugin_init` 返回 `CORE_ERR_INIT`。
-9. 三个最小桩齐全时加载成功，退出 0，不跑 5 帧。
+9. 两个最小桩齐全时加载成功，退出 0，不跑 5 帧。
 
 正常加载成功命令：
 
@@ -365,10 +368,8 @@ cmake --build build --config Release
 | `module_host_core` | `core` | `build/Release` | 0/1/2 | 内核可执行 |
 | `stage1_stub_capture` | `capture_plugin` | `build/Release/stubs` | 1/2 | 最小 capture 桩 |
 | `stage1_stub_policy` | `policy_plugin` | `build/Release/stubs` | 1/2 | 最小 policy 桩 |
-| `stage1_stub_input` | `input_plugin` | `build/Release/stubs` | 1/2 | 最小 input 桩 |
 | `bad_missing_symbol_capture` | `capture_plugin` | `build/Release/bad_plugins/missing_symbol_capture` | 1 | 缺 `plugin_capture` |
 | `bad_missing_symbol_policy` | `policy_plugin` | `build/Release/bad_plugins/missing_symbol_policy` | 1 | 缺 `plugin_decide` |
-| `bad_missing_symbol_input` | `input_plugin` | `build/Release/bad_plugins/missing_symbol_input` | 1 | 缺 `plugin_execute` |
 | `bad_abi_mismatch_capture` | `capture_plugin` | `build/Release/bad_plugins/abi_mismatch_capture` | 1 | ABI 不匹配 |
 | `bad_meta_null_capture` | `capture_plugin` | `build/Release/bad_plugins/meta_null_capture` | 1 | `plugin_meta` 返回 NULL |
 | `bad_meta_seg_count_capture` | `capture_plugin` | `build/Release/bad_plugins/meta_seg_count_capture` | 1 | 段数不是 4 |
@@ -377,12 +378,10 @@ cmake --build build --config Release
 | `bad_init_fail_capture` | `capture_plugin` | `build/Release/bad_plugins/init_fail_capture` | 1 | `plugin_init` 失败 |
 | `stage2_normal_capture` | `capture_plugin` | `build/Release/plugins` | 2 | 正常假 capture |
 | `stage2_normal_policy` | `policy_plugin` | `build/Release/plugins` | 2 | 正常假 policy |
-| `stage2_normal_input` | `input_plugin` | `build/Release/plugins` | 2 | 正常假 input |
 | `rt_capture_fail` | `capture_plugin` | `build/Release/runtime_errors/capture_fail` | 2 | 捕获失败 |
 | `rt_decide_fail` | `policy_plugin` | `build/Release/runtime_errors/decide_fail` | 2 | 决策失败 |
 | `rt_decide_over_count` | `policy_plugin` | `build/Release/runtime_errors/decide_over_count` | 2 | `out_count=9` |
 | `rt_decide_empty` | `policy_plugin` | `build/Release/runtime_errors/decide_empty` | 2 | 无意图 |
-| `rt_execute_fail` | `input_plugin` | `build/Release/runtime_errors/execute_fail` | 2 | 执行失败 |
 
 缺失 DLL 场景不生成对应 DLL，只需准备其他两个桩。
 
@@ -390,33 +389,30 @@ cmake --build build --config Release
 
 #### `bad_plugins`
 
-| 场景 | `capture_plugin.dll` | `policy_plugin.dll` | `input_plugin.dll` |
-|---|---|---|---|
-| `missing_capture` | 不放入 | 最小桩 | 最小桩 |
-| `missing_policy` | 最小桩 | 不放入 | 最小桩 |
-| `missing_input` | 最小桩 | 最小桩 | 不放入 |
-| `missing_symbol_capture` | 错误桩：缺 `plugin_capture` | 最小桩 | 最小桩 |
-| `missing_symbol_policy` | 最小桩 | 错误桩：缺 `plugin_decide` | 最小桩 |
-| `missing_symbol_input` | 最小桩 | 最小桩 | 错误桩：缺 `plugin_execute` |
-| `abi_mismatch_capture` | 错误桩：ABI 不匹配 | 最小桩 | 最小桩 |
-| `meta_null_capture` | 错误桩：meta NULL | 最小桩 | 最小桩 |
-| `meta_seg_count_capture` | 错误桩：段数不是 4 | 最小桩 | 最小桩 |
-| `meta_abi_not_number_capture` | 错误桩：ABI 非数字 | 最小桩 | 最小桩 |
-| `meta_kind_mismatch_capture` | 错误桩：kind 不匹配 | 最小桩 | 最小桩 |
-| `init_fail_capture` | 错误桩：init 失败 | 最小桩 | 最小桩 |
-| `stubs` | 最小桩 | 最小桩 | 最小桩 |
+| 场景 | `capture_plugin.dll` | `policy_plugin.dll` |
+|---|---|---|
+| `missing_capture` | 不放入 | 最小桩 |
+| `missing_policy` | 最小桩 | 不放入 |
+| `missing_symbol_capture` | 错误桩：缺 `plugin_capture` | 最小桩 |
+| `missing_symbol_policy` | 最小桩 | 错误桩：缺 `plugin_decide` |
+| `abi_mismatch_capture` | 错误桩：ABI 不匹配 | 最小桩 |
+| `meta_null_capture` | 错误桩：meta NULL | 最小桩 |
+| `meta_seg_count_capture` | 错误桩：段数不是 4 | 最小桩 |
+| `meta_abi_not_number_capture` | 错误桩：ABI 非数字 | 最小桩 |
+| `meta_kind_mismatch_capture` | 错误桩：kind 不匹配 | 最小桩 |
+| `init_fail_capture` | 错误桩：init 失败 | 最小桩 |
+| `stubs` | 最小桩 | 最小桩 |
 
 #### `runtime_errors`
 
-| 场景 | `capture_plugin.dll` | `policy_plugin.dll` | `input_plugin.dll` |
-|---|---|---|---|
-| `capture_fail` | 运行期错误 capture | 正常 policy | 正常 input |
-| `decide_fail` | 正常 capture | 运行期错误 policy | 正常 input |
-| `decide_over_count` | 正常 capture | 运行期错误 policy | 正常 input |
-| `decide_empty` | 正常 capture | 运行期错误 policy | 正常 input |
-| `execute_fail` | 正常 capture | 正常 policy | 运行期错误 input |
+| 场景 | `capture_plugin.dll` | `policy_plugin.dll` |
+|---|---|---|
+| `capture_fail` | 运行期错误 capture | 正常 policy |
+| `decide_fail` | 正常 capture | 运行期错误 policy |
+| `decide_over_count` | 正常 capture | 运行期错误 policy |
+| `decide_empty` | 正常 capture | 运行期错误 policy |
 
-每个目录最终为“一个错误插件 + 两个正常插件”。
+每个目录最终为“一个错误插件 + 一个正常插件”。
 
 ---
 
@@ -440,7 +436,7 @@ cmake --build build --config Release
 2. 按场景创建目录。
 3. 从 `build/Release/plugins/` 复制正常插件。
 4. 从 `build/Release/runtime_errors/<scenario>/` 复制错误插件并覆盖对应文件。
-5. 确保每个目录最终为“一个错误插件 + 两个正常插件”。
+5. 确保每个目录最终为“一个错误插件 + 一个正常插件”。
 
 ### 7.3 `run_acceptance.ps1`
 
@@ -495,7 +491,6 @@ build\Release\core.exe --plugins-dir <scenario_dir>
 [错误] 捕获失败
 [错误] 决策失败
 [错误] out_count 违约: 9 > 8
-[错误] 执行失败
 ```
 
 验收预期表：
@@ -504,10 +499,8 @@ build\Release\core.exe --plugins-dir <scenario_dir>
 |---|---|---|---|
 | `missing_capture` | `缺失 DLL: capture_plugin.dll` | 非 0 | 阶段 1 / `bad_plugins` |
 | `missing_policy` | `缺失 DLL: policy_plugin.dll` | 非 0 | 阶段 1 / `bad_plugins` |
-| `missing_input` | `缺失 DLL: input_plugin.dll` | 非 0 | 阶段 1 / `bad_plugins` |
 | `missing_symbol_capture` | `缺失符号: plugin_capture` | 非 0 | 阶段 1 / `bad_plugins` |
 | `missing_symbol_policy` | `缺失符号: plugin_decide` | 非 0 | 阶段 1 / `bad_plugins` |
-| `missing_symbol_input` | `缺失符号: plugin_execute` | 非 0 | 阶段 1 / `bad_plugins` |
 | `abi_mismatch_capture` | `ABI 不匹配` | 非 0 | 阶段 1 / `bad_plugins` |
 | `meta_null_capture` | `元数据无效: NULL` | 非 0 | 阶段 1 / `bad_plugins` |
 | `meta_seg_count_capture` | `元数据无效: 段数不是 4` | 非 0 | 阶段 1 / `bad_plugins` |
@@ -520,7 +513,6 @@ build\Release\core.exe --plugins-dir <scenario_dir>
 | `runtime_errors/decide_fail` | `决策失败` | 非 0 | 阶段 2 / `runtime_errors` |
 | `runtime_errors/decide_over_count` | `out_count 违约` | 非 0 | 阶段 2 / `runtime_errors` |
 | `runtime_errors/decide_empty` | `无意图`，5 帧后正常退出 | 0 | 阶段 2 / `runtime_errors` |
-| `runtime_errors/execute_fail` | `执行失败` | 非 0 | 阶段 2 / `runtime_errors` |
 
 ---
 
@@ -571,3 +563,72 @@ build\Release\core.exe --plugins-dir <scenario_dir>
 > 先锁契约，再锁加载类错误路径，最后锁假插件正常闭环和运行期错误路径。阶段 0 现在就可以开始；阶段 1 验收前完成本文档约定的脚本与解析修订即可。
 
 ---
+
+## 十三、实现状态（截至当前）
+
+### 插件清单
+
+实际只构建两个插件：
+
+- `capture_plugin.dll`
+- `policy_plugin.dll`
+
+`input_plugin.dll` 已移除。输入输出统一由宿主内的 `src/core/output_manager.cpp` 承担。
+
+### 实际 CMake target（对照 `CMakeLists.txt`）
+
+| target 名 | OUTPUT_NAME | 输出目录 | 阶段 |
+|---|---|---|---|
+| `module_host_core` | `core` | `build/Release` | 0/1/2 |
+| `stage1_stub_capture` | `capture_plugin` | `build/Release/stubs` | 1/2 |
+| `stage1_stub_policy` | `policy_plugin` | `build/Release/stubs` | 1/2 |
+| `bad_missing_symbol_capture` | `capture_plugin` | `build/Release/bad_plugins/missing_symbol_capture` | 1 |
+| `bad_missing_symbol_policy` | `policy_plugin` | `build/Release/bad_plugins/missing_symbol_policy` | 1 |
+| `bad_abi_mismatch_capture` | `capture_plugin` | `build/Release/bad_plugins/abi_mismatch_capture` | 1 |
+| `bad_meta_null_capture` | `capture_plugin` | `build/Release/bad_plugins/meta_null_capture` | 1 |
+| `bad_meta_seg_count_capture` | `capture_plugin` | `build/Release/bad_plugins/meta_seg_count_capture` | 1 |
+| `bad_meta_abi_not_number_capture` | `capture_plugin` | `build/Release/bad_plugins/meta_abi_not_number_capture` | 1 |
+| `bad_meta_kind_mismatch_capture` | `capture_plugin` | `build/Release/bad_plugins/meta_kind_mismatch_capture` | 1 |
+| `bad_init_fail_capture` | `capture_plugin` | `build/Release/bad_plugins/init_fail_capture` | 1 |
+| `stage2_normal_capture` | `capture_plugin` | `build/Release/plugins` | 2 |
+| `stage2_normal_policy` | `policy_plugin` | `build/Release/plugins` | 2 |
+| `rt_capture_fail` | `capture_plugin` | `build/Release/runtime_errors/capture_fail` | 2 |
+| `rt_decide_fail` | `policy_plugin` | `build/Release/runtime_errors/decide_fail` | 2 |
+| `rt_decide_over_count` | `policy_plugin` | `build/Release/runtime_errors/decide_over_count` | 2 |
+| `rt_decide_empty` | `policy_plugin` | `build/Release/runtime_errors/decide_empty` | 2 |
+| `stage2_real_capture` | `capture_plugin` | `build/Release/plugins_real` | 3 |
+| `stage2_test_policy` | `policy_plugin` | `build/Release/plugins_real` | 3 |
+| `stage2_yolo_policy` | `policy_plugin` | `build/Release/plugins_yolo` | 3 |
+
+### 实际验收项数量
+
+| 阶段 | 场景数 |
+|---|---|
+| 阶段 1 | 11/11（`stage1_build_gate` + 10 个 bad_plugins 场景） |
+| 阶段 2 | 5/5（`stage2_build_gate` + 4 个 runtime_errors 场景） |
+
+`docs/contract-change-procedure.md` 里写的 13/13 与 6/6 是三插件时代的数字，已在两插件架构下失去意义。
+
+### 与早期设计的其它偏差
+
+| # | 早期设计 | 实际 |
+|---|---|---|
+| 1 | 三插件（capture / policy / input） | 两插件（capture / policy）+ output_manager |
+| 2 | `class Decider` | `class ScriptHost` + `class CppScript`（见 `docs/stage6.md` 第九节） |
+| 3 | `class Combat` | 状态机直接在 `cpp_script.cpp`（见 `docs/stage7.md` 第十一节） |
+| 4 | 决策层嵌在宿主 | 决策层做成可替换脚本，用 `experiments/script_replay` 回放验证 |
+
+### 主验收入口
+
+`scripts/run_all.ps1` 含 10 步：
+
+1. 契约编译（C11 + C++17）
+2. OFF configure + build
+3. OFF stubs 加载
+4. prepare_bad_plugin_dirs
+5. OFF 阶段 1 验收（11 场景）
+6. ON configure + build
+7. script replay 构建 + 6 fixture 回放
+8. ON 正常 plugins 5 帧闭环
+9. prepare_runtime_error_dirs
+10. ON 阶段 2 验收（5 场景）
