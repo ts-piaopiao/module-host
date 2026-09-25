@@ -23,7 +23,7 @@ if (-not $vsdevcmd) {
 }
 if (-not (Test-Path -LiteralPath $vsdevcmd)) {
     Write-Output ("[ERROR] VsDevCmd not found: {0}" -f $vsdevcmd)
-    Write-Output "SUMMARY: contract=FAIL off_build=FAIL off_stubs=FAIL off_stage1=FAIL on_build=FAIL script=FAIL on_normal=FAIL on_stage2=FAIL result=FAIL"
+    Write-Output "SUMMARY: contract=FAIL off_build=FAIL off_stubs=FAIL off_stage1=FAIL on_build=FAIL script=FAIL output_probe=FAIL on_normal=FAIL on_stage2=FAIL result=FAIL"
     exit 1
 }
 
@@ -37,6 +37,8 @@ $acceptance = Join-Path (Join-Path $ProjectRoot 'scripts') 'run_acceptance.ps1'
 $contractAcceptance = Join-Path (Join-Path $ProjectRoot 'scripts') 'run_contract_acceptance.ps1'
 $scriptAcceptance = Join-Path (Join-Path $ProjectRoot 'scripts') 'run_script_acceptance.ps1'
 $scriptReplayDir = Join-Path $ProjectRoot 'experiments\script_replay'
+$outputProbeDir = Join-Path $ProjectRoot 'experiments\output_probe'
+$outputProbeAcceptance = Join-Path (Join-Path $ProjectRoot 'scripts') 'run_output_probe.ps1'
 
 function Invoke-External {
     param(
@@ -154,6 +156,7 @@ function Invoke-PrepareScript {
 
 $contract = 'FAIL'
 $script = 'FAIL'
+$output_probe = 'FAIL'
 $off_build = 'FAIL'
 $off_stubs = 'FAIL'
 $off_stage1 = 'FAIL'
@@ -162,89 +165,89 @@ $on_normal = 'FAIL'
 $on_stage2 = 'FAIL'
 $anyFail = $false
 
-# STEP 1/10
-[Console]::Out.WriteLine('[STEP 1/10] contract compile (C11 + C++17) ...')
+# STEP 1/11
+[Console]::Out.WriteLine('[STEP 1/11] contract compile (C11 + C++17) ...')
 $inner = ('call "{0}" -arch=x64 -host_arch=x64 && powershell -NoProfile -ExecutionPolicy Bypass -File "{1}"' -f $vsdevcmd, $contractAcceptance)
 $r = Invoke-CmdShell -InnerCmd $inner
 if ($r.ExitCode -eq 0 -and $r.Output.Contains('failed=0')) {
     $contract = 'PASS'
-    [Console]::Out.WriteLine('[STEP 1/10] contract compile (C11 + C++17) ... OK')
+    [Console]::Out.WriteLine('[STEP 1/11] contract compile (C11 + C++17) ... OK')
     if ($r.Output) { [Console]::Out.WriteLine($r.Output.TrimEnd()) }
 } else {
     $anyFail = $true
-    [Console]::Out.WriteLine(('[STEP 1/10] contract compile (C11 + C++17) ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 1/11] contract compile (C11 + C++17) ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'contract compile' -Command $inner -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 2/10
-[Console]::Out.WriteLine('[STEP 2/10] OFF configure+build ...')
+# STEP 2/11
+[Console]::Out.WriteLine('[STEP 2/11] OFF configure+build ...')
 $r = Invoke-CMakeConfigureBuild -Stage2Flag 'OFF'
 if ($r.ExitCode -eq 0) {
     $off_build = 'PASS'
-    [Console]::Out.WriteLine('[STEP 2/10] OFF configure+build ... OK')
+    [Console]::Out.WriteLine('[STEP 2/11] OFF configure+build ... OK')
 } else {
     $anyFail = $true
-    [Console]::Out.WriteLine(('[STEP 2/10] OFF configure+build ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 2/11] OFF configure+build ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'OFF configure+build' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 3/10
-[Console]::Out.WriteLine('[STEP 3/10] OFF stubs load ...')
+# STEP 3/11
+[Console]::Out.WriteLine('[STEP 3/11] OFF stubs load ...')
 $r = Test-CoreRun -PluginsDir $stubsDir -Keywords @('[内核] 加载成功') -RequireExitZero $true
 if ($r.Ok) {
     $off_stubs = 'PASS'
-    [Console]::Out.WriteLine('[STEP 3/10] OFF stubs load ... OK')
+    [Console]::Out.WriteLine('[STEP 3/11] OFF stubs load ... OK')
 } else {
     $anyFail = $true
-    [Console]::Out.WriteLine(('[STEP 3/10] OFF stubs load ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 3/11] OFF stubs load ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'OFF stubs load' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 4/10
-[Console]::Out.WriteLine('[STEP 4/10] prepare_bad_plugin_dirs ...')
+# STEP 4/11
+[Console]::Out.WriteLine('[STEP 4/11] prepare_bad_plugin_dirs ...')
 $r = Invoke-PrepareScript -ScriptPath $prepareBad
 if ($r.Ok) {
-    [Console]::Out.WriteLine('[STEP 4/10] prepare_bad_plugin_dirs ... OK')
+    [Console]::Out.WriteLine('[STEP 4/11] prepare_bad_plugin_dirs ... OK')
 } else {
     $anyFail = $true
-    [Console]::Out.WriteLine(('[STEP 4/10] prepare_bad_plugin_dirs ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 4/11] prepare_bad_plugin_dirs ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'prepare_bad_plugin_dirs' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 5/10
-[Console]::Out.WriteLine('[STEP 5/10] OFF stage1 acceptance ...')
+# STEP 5/11
+[Console]::Out.WriteLine('[STEP 5/11] OFF stage1 acceptance ...')
 $r = Test-Acceptance -Stage 'stage1'
 if ($r.Ok) {
     $off_stage1 = 'PASS'
-    [Console]::Out.WriteLine('[STEP 5/10] OFF stage1 acceptance ... OK')
+    [Console]::Out.WriteLine('[STEP 5/11] OFF stage1 acceptance ... OK')
     if ($r.Output) { [Console]::Out.WriteLine($r.Output.TrimEnd()) }
 } else {
     $anyFail = $true
     $off_stage1 = 'FAIL'
-    [Console]::Out.WriteLine(('[STEP 5/10] OFF stage1 acceptance ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 5/11] OFF stage1 acceptance ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'OFF stage1 acceptance' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 6/10
-[Console]::Out.WriteLine('[STEP 6/10] ON configure+build ...')
+# STEP 6/11
+[Console]::Out.WriteLine('[STEP 6/11] ON configure+build ...')
 $r = Invoke-CMakeConfigureBuild -Stage2Flag 'ON'
 if ($r.ExitCode -eq 0) {
     $on_build = 'PASS'
-    [Console]::Out.WriteLine('[STEP 6/10] ON configure+build ... OK')
+    [Console]::Out.WriteLine('[STEP 6/11] ON configure+build ... OK')
 } else {
     $anyFail = $true
     $on_build = 'FAIL'
-    [Console]::Out.WriteLine(('[STEP 6/10] ON configure+build ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 6/11] ON configure+build ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'ON configure+build' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 7/10
-[Console]::Out.WriteLine('[STEP 7/10] script replay build + acceptance ...')
+# STEP 7/11
+[Console]::Out.WriteLine('[STEP 7/11] script replay build + acceptance ...')
 $inner = ('call "{0}" -arch=x64 -host_arch=x64 && cd /d "{1}" && cmake -S "{2}" -B "{2}\build" && cmake --build "{2}\build" --config {3}' -f $vsdevcmd, $ProjectRoot, $scriptReplayDir, $Config)
 $rBuild = Invoke-CmdShell -InnerCmd $inner
 if ($rBuild.ExitCode -ne 0) {
     $anyFail = $true
-    [Console]::Out.WriteLine(('[STEP 7/10] script replay build + acceptance ... FAIL (build exit={0})' -f $rBuild.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 7/11] script replay build + acceptance ... FAIL (build exit={0})' -f $rBuild.ExitCode))
     Show-StepFailure -Label 'script replay build' -Command $inner -Output $rBuild.Output -ExitCode $rBuild.ExitCode
 } else {
     $rAccept = Invoke-External -FilePath 'powershell.exe' -ArgumentList (
@@ -252,56 +255,79 @@ if ($rBuild.ExitCode -ne 0) {
     )
     if ($rAccept.ExitCode -eq 0 -and $rAccept.Output.Contains('failed=0')) {
         $script = 'PASS'
-        [Console]::Out.WriteLine('[STEP 7/10] script replay build + acceptance ... OK')
+        [Console]::Out.WriteLine('[STEP 7/11] script replay build + acceptance ... OK')
         if ($rAccept.Output) { [Console]::Out.WriteLine($rAccept.Output.TrimEnd()) }
     } else {
         $anyFail = $true
-        [Console]::Out.WriteLine(('[STEP 7/10] script replay build + acceptance ... FAIL (acceptance exit={0})' -f $rAccept.ExitCode))
+        [Console]::Out.WriteLine(('[STEP 7/11] script replay build + acceptance ... FAIL (acceptance exit={0})' -f $rAccept.ExitCode))
         Show-StepFailure -Label 'script replay acceptance' -Command ('powershell -File "{0}"' -f $scriptAcceptance) -Output $rAccept.Output -ExitCode $rAccept.ExitCode
     }
 }
 
-# STEP 8/10
-[Console]::Out.WriteLine('[STEP 8/10] ON normal plugins run ...')
+# STEP 8/11
+[Console]::Out.WriteLine('[STEP 8/11] output probe build + acceptance ...')
+$inner = ('call "{0}" -arch=x64 -host_arch=x64 && cd /d "{1}" && cmake -S "{2}" -B "{2}\build" && cmake --build "{2}\build" --config {3}' -f $vsdevcmd, $ProjectRoot, $outputProbeDir, $Config)
+$rBuild = Invoke-CmdShell -InnerCmd $inner
+if ($rBuild.ExitCode -ne 0) {
+    $anyFail = $true
+    [Console]::Out.WriteLine(('[STEP 8/11] output probe build + acceptance ... FAIL (build exit={0})' -f $rBuild.ExitCode))
+    Show-StepFailure -Label 'output probe build' -Command $inner -Output $rBuild.Output -ExitCode $rBuild.ExitCode
+} else {
+    $rAccept = Invoke-External -FilePath 'powershell.exe' -ArgumentList (
+        ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $outputProbeAcceptance)
+    )
+    if ($rAccept.ExitCode -eq 0 -and $rAccept.Output.Contains('failed=0')) {
+        $output_probe = 'PASS'
+        [Console]::Out.WriteLine('[STEP 8/11] output probe build + acceptance ... OK')
+        if ($rAccept.Output) { [Console]::Out.WriteLine($rAccept.Output.TrimEnd()) }
+    } else {
+        $anyFail = $true
+        [Console]::Out.WriteLine(('[STEP 8/11] output probe build + acceptance ... FAIL (acceptance exit={0})' -f $rAccept.ExitCode))
+        Show-StepFailure -Label 'output probe acceptance' -Command ('powershell -File "{0}"' -f $outputProbeAcceptance) -Output $rAccept.Output -ExitCode $rAccept.ExitCode
+    }
+}
+
+# STEP 9/11
+[Console]::Out.WriteLine('[STEP 9/11] ON normal plugins run ...')
 $r = Test-CoreRun -PluginsDir $pluginsDir -Keywords @('[帧 5]', '[内核] 5 帧完成') -RequireExitZero $true
 if ($r.Ok) {
     $on_normal = 'PASS'
-    [Console]::Out.WriteLine('[STEP 8/10] ON normal plugins run ... OK')
+    [Console]::Out.WriteLine('[STEP 9/11] ON normal plugins run ... OK')
 } else {
     $anyFail = $true
     $on_normal = 'FAIL'
-    [Console]::Out.WriteLine(('[STEP 8/10] ON normal plugins run ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 9/11] ON normal plugins run ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'ON normal plugins run' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 9/10
-[Console]::Out.WriteLine('[STEP 9/10] prepare_runtime_error_dirs ...')
+# STEP 10/11
+[Console]::Out.WriteLine('[STEP 10/11] prepare_runtime_error_dirs ...')
 $r = Invoke-PrepareScript -ScriptPath $prepareRt
 if ($r.Ok) {
-    [Console]::Out.WriteLine('[STEP 9/10] prepare_runtime_error_dirs ... OK')
+    [Console]::Out.WriteLine('[STEP 10/11] prepare_runtime_error_dirs ... OK')
 } else {
     $anyFail = $true
-    [Console]::Out.WriteLine(('[STEP 9/10] prepare_runtime_error_dirs ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 10/11] prepare_runtime_error_dirs ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'prepare_runtime_error_dirs' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
-# STEP 10/10
-[Console]::Out.WriteLine('[STEP 10/10] ON stage2 acceptance ...')
+# STEP 11/11
+[Console]::Out.WriteLine('[STEP 11/11] ON stage2 acceptance ...')
 $r = Test-Acceptance -Stage 'stage2'
 if ($r.Ok) {
     $on_stage2 = 'PASS'
-    [Console]::Out.WriteLine('[STEP 10/10] ON stage2 acceptance ... OK')
+    [Console]::Out.WriteLine('[STEP 11/11] ON stage2 acceptance ... OK')
     if ($r.Output) { [Console]::Out.WriteLine($r.Output.TrimEnd()) }
 } else {
     $anyFail = $true
     $on_stage2 = 'FAIL'
-    [Console]::Out.WriteLine(('[STEP 10/10] ON stage2 acceptance ... FAIL (exit={0})' -f $r.ExitCode))
+    [Console]::Out.WriteLine(('[STEP 11/11] ON stage2 acceptance ... FAIL (exit={0})' -f $r.ExitCode))
     Show-StepFailure -Label 'ON stage2 acceptance' -Command $r.Command -Output $r.Output -ExitCode $r.ExitCode
 }
 
 $result = if ($anyFail) { 'FAIL' } else { 'PASS' }
-[Console]::Out.WriteLine(('SUMMARY: contract={0} off_build={1} off_stubs={2} off_stage1={3} on_build={4} script={5} on_normal={6} on_stage2={7} result={8}' -f `
-    $contract, $off_build, $off_stubs, $off_stage1, $on_build, $script, $on_normal, $on_stage2, $result))
+[Console]::Out.WriteLine(('SUMMARY: contract={0} off_build={1} off_stubs={2} off_stage1={3} on_build={4} script={5} output_probe={6} on_normal={7} on_stage2={8} result={9}' -f `
+    $contract, $off_build, $off_stubs, $off_stage1, $on_build, $script, $output_probe, $on_normal, $on_stage2, $result))
 
 if ($anyFail) { exit 1 }
 exit 0
