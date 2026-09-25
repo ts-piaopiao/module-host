@@ -182,6 +182,8 @@ int main(int argc, char** argv) {
     int64_t last_e_release_t = 0;
     bool seen_idle_since_release = false;   // 本次 release后是否进过 IDLE（I5 豁免）
     long long exempt_i5 = 0;
+    bool interrupted_during_e = false;      // 当前 E 段内是否出现 me/target 丢失（I4 豁免）
+    long long exempt_i4 = 0;
 
     long long replayed = 0;
     uint64_t last_frame_t = 0;
@@ -246,11 +248,17 @@ int main(int argc, char** argv) {
         // I5 豁免依据：上一次 E release之后出现过 IDLE（攻击/恢复被目标丢失打断）
         if (has_e_release && dbg.state == 0) seen_idle_since_release = true;
 
+        // I4 豁免依据：E 段内（含释放当帧）出现 me/target 丢失
+        if ((dbg.desired_e || prev_e) && (!dbg.me_locked || !dbg.target_locked)) {
+            interrupted_during_e = true;
+        }
+
         // I4/I5: desired_e 连续段跟踪
         if (dbg.desired_e) {
             if (!prev_e) {
                 e_run_start_frame = frame_idx;
                 e_run_start_t = now_ms;
+                interrupted_during_e = false;
             }
             ++e_run_frames;
             if (!prev_e) {
@@ -274,11 +282,16 @@ int main(int argc, char** argv) {
             // 帧数×33 会把 100~131ms 的按压少算成 99ms
             const long long ms = static_cast<long long>(now_ms - e_run_start_t);
             if (ms < kMinEHoldMs || ms > kMaxEHoldMs + kMaxEHoldSlackMs) {
-                ++viol[3];
-                std::printf("[I4] 违例 frame=%llu..%llu: E持续 %lldms (%lld帧) 超出[100,2000]\n",
-                            (unsigned long long)e_run_start_frame,
-                            (unsigned long long)frame_idx,
-                            (long long)ms, (long long)e_run_frames);
+                if (interrupted_during_e) {
+                    // E 段内 me/target 丢失：E 被外部条件打断，时长不反映脚本本意
+                    ++exempt_i4;
+                } else {
+                    ++viol[3];
+                    std::printf("[I4] 违例 frame=%llu..%llu: E持续 %lldms (%lld帧) 超出[100,2000]\n",
+                                (unsigned long long)e_run_start_frame,
+                                (unsigned long long)frame_idx,
+                                (long long)ms, (long long)e_run_frames);
+                }
             }
             has_e_release = true;
             last_e_release_t = static_cast<int64_t>(now_ms);
@@ -348,6 +361,9 @@ int main(int argc, char** argv) {
         } else {
             std::printf("  I%d: FAIL (%lld 次违例) %s\n", i + 1, viol[i], InvariantName(i));
         }
+    }
+    if (exempt_i4 > 0) {
+        std::printf("  I4 豁免: %lld 次（E 段内出现 me/target 丢失，E 被外部打断）\n", exempt_i4);
     }
     if (exempt_i5 > 0) {
         std::printf("  I5 豁免: %lld 次（两次E之间进入过 IDLE，RECOVERY 被丢失打断）\n", exempt_i5);
