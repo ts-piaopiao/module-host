@@ -14,7 +14,7 @@ using nlohmann::json;
 
 namespace {
 
-constexpr int kInvariantCount = 10;
+constexpr int kInvariantCount = 11;
 constexpr long long kFrameMs = 33;
 constexpr long long kMinEHoldMs = 100;
 constexpr int64_t kMinEGapMs = 800;
@@ -52,6 +52,7 @@ const char* InvariantName(int idx) {
         case 7: return "I8 state 转移合法（0->1 / 1->0,1,2,3 / 2->0,2,4 / 3->0,3,4 / 4->0,1,4）";
         case 8: return "I9 KEY 动作 press/release 合法（不重复按下 / 不未按先放）";
         case 9: return "I10 active_key 方向与 facing 一致（reversing 除外）";
+        case 10: return "I11 (!me_locked || !target_locked) -> state == IDLE";
         default: return "?";
     }
 }
@@ -257,6 +258,16 @@ int main(int argc, char** argv) {
                 std::printf("[I10] 违例 frame=%llu: active_key=LEFT 但 facing=%d\n",
                             (unsigned long long)frame_idx, dbg.facing);
             }
+        }
+
+        // I11: me 或 target 未锁定时 state 必须为 IDLE
+        // 依据：cpp_script.cpp 的 OnFrame 全局检查——me.valid 或 target.has 失效时立即回 IDLE
+        // DebugInfo 的 me_locked/target_locked 与内部 valid/has 同步（超时时同时清零）
+        if ((!dbg.me_locked || !dbg.target_locked) && dbg.state != 0) {
+            ++viol[10];
+            std::printf("[I11] 违例 frame=%llu: me_locked=%d target_locked=%d state=%d\n",
+                        (unsigned long long)frame_idx,
+                        dbg.me_locked ? 1 : 0, dbg.target_locked ? 1 : 0, dbg.state);
         }
 
         // I8: state 转移合法性（帧间检查）
