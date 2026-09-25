@@ -13,7 +13,7 @@ if ($ProjectRoot -eq "") {
 
 $coreExe = Join-Path $ProjectRoot "build\$Config\core.exe"
 $pluginsRealDir = Join-Path $ProjectRoot "build\$Config\plugins_real"
-$requiredDlls = @("capture_plugin.dll", "policy_plugin.dll", "input_plugin.dll")
+$requiredDlls = @("capture_plugin.dll", "policy_plugin.dll")
 
 if (-not [System.IO.Path]::IsPathRooted($ConfigPath)) {
     $ConfigPath = Join-Path $ProjectRoot $ConfigPath
