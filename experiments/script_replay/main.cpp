@@ -17,7 +17,7 @@ namespace {
 constexpr int kInvariantCount = 9;
 constexpr long long kFrameMs = 33;
 constexpr long long kMinEHoldMs = 100;
-constexpr long long kMaxEHoldMs = 2000;   // = combat_e_hold_max_ms（S9 多目标长按上限）
+constexpr long long kMaxEHoldMs = 2000;   // 长按逻辑已删除，暂时保留旧上限；收紧独立任务
 constexpr long long kMaxEHoldSlackMs = kFrameMs;  // 硬上限到点后最早也要下一帧才观察到释放
 constexpr int64_t kMinEGapMs = 800;
 
@@ -355,7 +355,6 @@ int main(int argc, char** argv) {
             o["target_cx"] = dbg.target_cx;
             o["active_key"] = dbg.active_key;
             o["desired_e"] = dbg.desired_e ? 1 : 0;
-            o["e_long_hold"] = dbg.e_long_hold ? 1 : 0;
             o["dets"] = dets.count;
             json arr = json::array();
             for (uint32_t i = 0; i < dec.out_count; ++i) {

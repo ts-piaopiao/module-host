@@ -228,9 +228,6 @@ struct CombatConfig {
     int e_rare_hi_min_ms = 190;
     int e_rare_hi_max_ms = 300;
 
-    // 多目标长按
-    int e_hold_max_ms = 2000;
-
     // CHASE → ATTACK 延迟
     int attack_react_min_ms = 80;
     int attack_react_max_ms = 200;
@@ -244,7 +241,6 @@ struct CppScript::Impl {
     static constexpr int kETapMsMin = 150;
     static constexpr int kETapMsMax = 300;
     static constexpr uint64_t kRecoveryMs = 850;
-    static constexpr int kAttackModeLockMs = 100;
     static constexpr int kTurnPressDelayMinMs = 100;
     static constexpr int kTurnPressDelayMaxMs = 200;
     static constexpr int kTurnKeyReleaseDelayMs = 100;
@@ -295,35 +291,12 @@ struct CppScript::Impl {
     uint64_t pending_chase_start_ms = 0;
     int pending_chase_delay_ms = 0;
 
-    // E 长按 (S9)
-    bool e_long_hold = false;
-    uint64_t e_long_hold_start_ms = 0;
-
-    // 进入 ATTACK 时定下的模式，锁定期内不随 band_count 抖动切换
-    uint64_t attack_mode_lock_until_ms = 0;  // 该时刻前不允许切换模式
-    bool attack_is_long_hold = false;        // 进入时定的模式
-
     CombatConfig cfg;
 
     int active_key = 0;
     int last_pressed = 0;
     bool desired_e = false;
     bool last_desired_e = false;
-
-    static int CountInBand(const ScriptWorld& world,
-                           float me_fx, float me_fy, const Impl* impl) {
-        (void)impl;
-        if (world.dets == nullptr) return 0;
-        int count = 0;
-        for (uint32_t i = 0; i < world.dets->count; ++i) {
-            const auto& d = world.dets->items[i];
-            if (d.cls != 1) continue;
-            const float fy = d.cy + d.h * 0.5f;
-            if (std::fabs(fy - me_fy) > kSamePlatY) continue;
-            if (IsInBand(me_fx, me_fy, d.cx, d.cy, d.h)) count++;
-        }
-        return count;
-    }
 };
 
 static void Trim(const std::string& s, std::string* out) {
@@ -365,7 +338,6 @@ static void NormalizeConfig(CombatConfig* cfg) {
     }
     if (cfg->e_common_prob < 0) cfg->e_common_prob = 0;
     if (cfg->e_common_prob > 100) cfg->e_common_prob = 100;
-    if (cfg->e_hold_max_ms < 1) cfg->e_hold_max_ms = 1;
 }
 
 static int SampleEHoldMs(const CombatConfig& cfg) {
@@ -438,8 +410,6 @@ bool CppScript::Init(const std::string& config) {
                 impl_->cfg.e_rare_hi_min_ms = num;
             } else if (key == "combat_e_rare_hi_max_ms") {
                 impl_->cfg.e_rare_hi_max_ms = num;
-            } else if (key == "combat_e_hold_max_ms") {
-                impl_->cfg.e_hold_max_ms = num;
             } else if (key == "combat_attack_react_min_ms") {
                 impl_->cfg.attack_react_min_ms = num;
             } else if (key == "combat_attack_react_max_ms") {
@@ -455,11 +425,10 @@ bool CppScript::Init(const std::string& config) {
 
     NormalizeConfig(&impl_->cfg);
 
-    std::printf("[script] 配置加载完成: e_common=[%d,%d]%%%d, e_rare_lo=[%d,%d], e_rare_hi=[%d,%d], hold_max=%d, react=[%d,%d], chase=[%d,%d]\n",
+    std::printf("[script] 配置加载完成: e_common=[%d,%d]%%%d, e_rare_lo=[%d,%d], e_rare_hi=[%d,%d], react=[%d,%d], chase=[%d,%d]\n",
         impl_->cfg.e_common_min_ms, impl_->cfg.e_common_max_ms, impl_->cfg.e_common_prob,
         impl_->cfg.e_rare_lo_min_ms, impl_->cfg.e_rare_lo_max_ms,
         impl_->cfg.e_rare_hi_min_ms, impl_->cfg.e_rare_hi_max_ms,
-        impl_->cfg.e_hold_max_ms,
         impl_->cfg.attack_react_min_ms, impl_->cfg.attack_react_max_ms,
         impl_->cfg.recovery_chase_min_ms, impl_->cfg.recovery_chase_max_ms);
     std::fflush(stdout);
@@ -490,7 +459,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             impl_->turn_e_pressed = false;
             impl_->pending_attack = false;
             impl_->pending_chase = false;
-            impl_->e_long_hold = false;
         }
     } else {
         const bool in_band = IsInBand(impl_->target, impl_->me);
@@ -525,12 +493,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                             impl_->attack_start_ms = now;
                             impl_->e_pressed = true;
                             impl_->current_e_tap_ms = SampleEHoldMs(impl_->cfg);
-                            impl_->e_long_hold = false;
-                            // 进入时按当前带内数量定模式，100ms 内不切换
-                            const int enter_band = Impl::CountInBand(world,
-                                impl_->me.lock_fx, impl_->me.lock_fy, impl_);
-                            impl_->attack_is_long_hold = (enter_band > 1);
-                            impl_->attack_mode_lock_until_ms = now + Impl::kAttackModeLockMs;
                             std::printf("[script] E 按下时长: %d ms\n",
                                         impl_->current_e_tap_ms);
                             std::fflush(stdout);
@@ -577,58 +539,14 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 if (!impl_->me.valid || !impl_->target.has) {
                     impl_->state = Impl::State::IDLE;
                     impl_->e_pressed = false;
-                    impl_->e_long_hold = false;
                     break;
                 }
 
-                const int band_count = Impl::CountInBand(world,
-                    impl_->me.lock_fx, impl_->me.lock_fy, impl_);
-
-                // 进入 ATTACK 后 100ms 内锁定模式，避免 band_count 抖动
-                // (1→2→1) 造成长按/单击瞬间切换、E 只按几十毫秒就释放
-                const bool mode_locked = now < impl_->attack_mode_lock_until_ms;
-                const bool long_hold_mode = mode_locked
-                    ? impl_->attack_is_long_hold
-                    : (band_count > 1);
-
-                if (long_hold_mode) {
-                    // 多目标：长按
-                    if (!impl_->e_long_hold) {
-                        impl_->e_long_hold = true;
-                        impl_->e_long_hold_start_ms = now;
-                        std::printf("[script] 多目标长按 E 开始 (带内 %d 只)\n", band_count);
-                        std::fflush(stdout);
-                    }
-                    // 保持 e_pressed = true
-                    // 硬上限兜底
-                    if (now - impl_->e_long_hold_start_ms >=
-                        static_cast<uint64_t>(impl_->cfg.e_hold_max_ms)) {
-                        impl_->e_pressed = false;
-                        impl_->e_long_hold = false;
-                        impl_->state = Impl::State::RECOVERY;
-                        impl_->recovery_start_ms = now;
-                        std::printf("[script] 长按达到硬上限，松开 E\n");
-                        std::fflush(stdout);
-                    }
-                } else {
-                    // band_count <= 1：单击
-                    if (impl_->e_long_hold) {
-                        // 从长按切到单击：释放
-                        impl_->e_long_hold = false;
-                        impl_->e_pressed = false;
-                        impl_->state = Impl::State::RECOVERY;
-                        impl_->recovery_start_ms = now;
-                        std::printf("[script] 带内仅剩 %d 只，松开 E\n", band_count);
-                        std::fflush(stdout);
-                    } else {
-                        // 正常单击：时长到点则释放
-                        if (now - impl_->attack_start_ms >=
-                            static_cast<uint64_t>(impl_->current_e_tap_ms)) {
-                            impl_->e_pressed = false;
-                            impl_->state = Impl::State::RECOVERY;
-                            impl_->recovery_start_ms = now;
-                        }
-                    }
+                if (now - impl_->attack_start_ms >=
+                    static_cast<uint64_t>(impl_->current_e_tap_ms)) {
+                    impl_->e_pressed = false;
+                    impl_->state = Impl::State::RECOVERY;
+                    impl_->recovery_start_ms = now;
                 }
                 break;
             }
@@ -773,7 +691,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             case Impl::State::ATTACK_TURN: state_str = "ATTACK_TURN"; break;
             case Impl::State::RECOVERY: state_str = "RECOVERY"; break;
         }
-        std::printf("[script] frame=%llu state=%s facing=%d me_locked=%d me=(%.3f,%.3f) target_locked=%d target_cx=%.3f key=0x%02X e=%d hold=%d\n",
+        std::printf("[script] frame=%llu state=%s facing=%d me_locked=%d me=(%.3f,%.3f) target_locked=%d target_cx=%.3f key=0x%02X e=%d\n",
                     (unsigned long long)world.frame_index,
                     state_str,
                     impl_->facing,
@@ -782,8 +700,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     impl_->target.locked ? 1 : 0,
                     impl_->target.cx,
                     impl_->active_key,
-                    desired_e ? 1 : 0,
-                    impl_->e_long_hold ? 1 : 0);
+                    desired_e ? 1 : 0);
         std::fflush(stdout);
     }
 } // End of OnFrame
@@ -847,5 +764,4 @@ void CppScript::GetDebugInfo(CppScriptDebugInfo* out) const {
     out->target_cx = impl_->target.cx;
     out->active_key = impl_->active_key;
     out->desired_e = impl_->desired_e;
-    out->e_long_hold = impl_->e_long_hold;
 }

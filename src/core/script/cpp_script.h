@@ -11,7 +11,6 @@ struct CppScriptDebugInfo {
     float target_cx = 0;
     int active_key = 0;
     bool desired_e = false;
-    bool e_long_hold = false;
 };
 
 class CppScript : public IScript {
