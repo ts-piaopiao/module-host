@@ -149,44 +149,52 @@ bad_plugins 里 abi_mismatch_capture 的 ABI 段要改成 "3"，保持不匹配�
 
 先扩契约，再重跑全部旧验收，全绿后才接真实硬件。
 
-## 八、实现状态（截至 stage3c）
+## 八、实现状态（截至当前）
 
 ### 已完成
 
-- ABI=2 契约扩展：core_frame.pts_ms、core_action、core_decision.actions、
-  core_execute_result、plugin_init(host_abi, config)、
-  plugin_execute(decision, out)
-- 阶段 0/1/2 全部回归通过（13/13 + 6/6）
-- 真实 capture 插件：src/real/real_capture.cpp，从采集卡 Media Foundation 拉帧，
+- 契约扩展（历经 ABI 2 → 3 → 4 三次变更）：
+  - ABI=2：`core_frame.pts_ms`、`core_action`、`core_decision.actions`、
+    `core_execute_result`、`plugin_init(host_abi, config)`、
+    `plugin_execute(decision, out)`
+  - ABI=3：`core_intent.frame`
+  - ABI=4：`core_detection`、`core_detections`、`core_intent.detections_out`
+- 阶段 0/1/2 全部回归通过（当前 11/11 + 5/5，两插件架构下）
+- 真实 capture 插件：`src/real/real_capture.cpp`，从采集卡 Media Foundation 拉帧，
   输出 1920x1080@30 BGRA8，帧缓冲在插件内部复用，
-  ReadSample 遇 STREAMTICK 重试（1 秒超时）
-- 真实 input 插件：src/real/real_input.cpp，走串口 115200 8N1，
-  遍历 core_decision.actions 翻译成 mk.* 文本命令发出，
-  串口在 init 打开、release 关闭，不在 execute 里开关
-- 测试 policy：src/real/test_policy.cpp，每帧产出"按 I 一次"两个动作
-- 真实插件输出到 build\Release\plugins_real\，
-  与假插件 plugins\ 分离，不影响无硬件环境下的 CI
-- 插件配置通过宿主 --config 文件原文透传，前缀键 capture_ / policy_ / input_
+  `ReadSample` 遇 STREAMTICK 重试（1 秒超时）
+- 真实 policy：`src/real/yolo_policy.cpp`，ONNX Runtime + DirectML，
+  推理线程独立跑，输出 detections
+- 测试 policy：`src/real/test_policy.cpp`，每帧产出"按 I 一次"两个动作
+- 串口输出：不再作为 input 插件，而是宿主内的 `src/core/output_manager.cpp`，
+  独占串口，115200 8N1，命令格式 `mk.*`
+- 远程操作：`src/core/remote_server.cpp` + `experiments/remote_client`，
+  JPEG 推流 + 上行键鼠事件
+- F12 控制模式：client → server → `OutputManager::SetScriptPaused`
+- 真实插件输出到 `build\Release\plugins_real\`，
+  与假插件 `plugins\` 分离，不影响无硬件环境下的 CI
+- 插件配置通过宿主 `--config` 文件原文透传，前缀键 `capture_` / `policy_`
   由宿主放行、插件自行解释
 
 ### 未完成
 
-- 真实 policy（YOLO 推理），src/real/test_policy.cpp 只是占位
-- 远程画面推流
-- 人工操作与自动决策的仲裁（多动作来源优先级）
+无（就本阶段定义的范围）。
 
-### 与设计文档的偏差
+### 与早期设计的偏差
 
-1. 插件配置不走 section，走全局 key=value 透传。
-   理由：只有一个真实插件时 section 增加复杂度，收益不明确。
-   将来若需要，再走契约变更。
-2. 真实插件输出到 plugins_real\ 而不是覆盖 plugins\。
-   理由：保留假插件用于无硬件 CI，避免 CI 依赖采集卡和串口。
-3. plugin_execute 每次决策只调用一次，input 插件内部遍历 actions。
-   这条是设计文档 2.5 节补充的内容，实现遵循了这条。
+1. **input 插件已移除**，串口职责内化进 `OutputManager`。
+   理由：远程操作需要"拿到就发"，不经过帧循环，避免 33ms 梳状。
+   详见 `docs/stage4.md` 第十三节。
+2. **`plugin_execute` 每次决策只调用一次的设计**（2.5 节）在 input 插件移除后不再适用——
+   决策输出改由 `OutputManager::SendScript` 直接入队。
+3. **真实 policy 从占位演进为推理**：`test_policy` 保留用于无 YOLO 环境；`yolo_policy` 是正式实现。
+4. **人工/自动仲裁未实现**——架构演进后不再需要（两条输出路径独立）。
+   详见 `docs/stage4.md` 第十三节。
+5. **ABI 从 2 继续升到 3 和 4**（`docs/stage5.md`、`docs/stage6.md` 各一次契约变更）。
 
 ### 已知未验证项
 
 - capture 长时间运行（>10 分钟）的内存与帧率稳定性
-- input 高频发送（>30 次/秒）时串口是否丢包
+- 串口高频发送（>30 次/秒）时是否丢包（由 `OutputManager` 承担）
 - 采集卡被其他程序占用时的错误恢复
+- YOLO 推理与 Python 项目在同帧同输入下的一致性（对比置信度、坐标、类别）
