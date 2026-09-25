@@ -504,32 +504,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         switch (impl_->state) {
             case Impl::State::IDLE:
                 if (impl_->me.valid && impl_->target.has) {
-                    if (in_band && is_front && fresh_target) {
-                        // 正面进带：先进入 pending，延迟后再按 E (S8)
-                        impl_->state = Impl::State::CHASE;
-                        impl_->pending_attack = true;
-                        impl_->pending_attack_start_ms = now;
-                        impl_->pending_attack_delay_ms = impl_->cfg.attack_react_min_ms +
-                            (std::rand() % (impl_->cfg.attack_react_max_ms - impl_->cfg.attack_react_min_ms + 1));
-                        std::printf("[script] 攻击反应延迟: %d ms\n",
-                                    impl_->pending_attack_delay_ms);
-                        std::fflush(stdout);
-                    } else if (in_band && !is_front && fresh_target) {
-                        impl_->state = Impl::State::ATTACK_TURN;
-                        impl_->turn_phase = 0;
-                        impl_->turn_phase_start_ms = now;
-                        impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
-                        impl_->turn_press_delay_ms =
-                            Impl::kTurnPressDelayMinMs +
-                            (std::rand() % (Impl::kTurnPressDelayMaxMs - Impl::kTurnPressDelayMinMs + 1));
-                        impl_->turn_e_tap_ms =
-                            Impl::kETapMsMin +
-                            (std::rand() % (Impl::kETapMsMax - Impl::kETapMsMin + 1));
-                        impl_->turn_key_pressed = false;
-                        impl_->turn_e_pressed = false;
-                    } else {
-                        impl_->state = Impl::State::CHASE;
-                    }
+                    impl_->state = Impl::State::CHASE;
                 }
                 break;
 
