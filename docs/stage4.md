@@ -202,3 +202,54 @@ remote_port == 0 时，不启动 TCP server，行为与阶段 3 完全一致。
 ## 十二、一句话原则
 
 先扩宿主，不改契约；人工优先，统一出口。
+
+## 十三、实现状态（截至当前）
+
+### 架构演进：为什么不再需要仲裁
+
+原设计（第五节）的前提是：**远程操作和脚本输出都汇入同一个 input 插件，再由 input 插件发串口**。同源，才需要仲裁决定每帧听谁的。
+
+实际演进去掉了这个前提：
+
+1. **动机**：远程操作的按键时刻被量化到 33ms 帧网格，手感不同于本机键盘，长序列有梳状特征。
+2. **动作**：远程操作改为"拿到就发"——`OutputManager::SendAsync` 从网络线程直达串口，不经过帧循环。
+3. **职责迁移**：input 插件的串口翻译职责内化进 `OutputManager`（`src/core/output_manager.cpp`）。
+4. **结果**：两条路径从源头就独立，不再汇入同一点。**仲裁不再是需求**——不是"未实现"，是"架构演进后天然不需要"。
+
+### 实际输出路径
+
+| 路径 | 调用者 | 线程 | 语义 |
+|---|---|---|---|
+| `SendScript` | `main.cpp` 帧循环 | 主线程 | 帧同步 |
+| `SendAsync` | `remote_server` 收到 human 事件 | 网络线程 | 事件驱动，直达串口 |
+
+两者在 `OutputManager` 内部用同一个 mutex 串行化写入队列，由 `OutputManager` 的发送线程统一发出。不存在"谁覆盖谁"的合并。
+
+### 保留的功能：F12 控制模式
+
+"人工接管"的需求由独立功能承担（**不是仲裁的替代品**，是另一件事）：
+
+- `remote_client` 按 F12 → 发 TCP 上行 `type = 4`（ControlMode，载荷 `int32 on`）
+- `remote_server` 收到后调 `output_manager.SetScriptPaused(on != 0)`
+- `output_manager` 暂停脚本输出，并遍历 `script_pressed_keys` 发 release（避免脚本按着的键一直按住）
+- 退出控制模式后脚本输出从下一帧恢复
+
+详见 `docs/output-manager.md`。
+
+### 已完成
+
+- TCP server（裸 TCP + 定长头），只接受一个客户端，断线后回到等待状态
+- 下行 JPEG 推流（WIC 编码，质量 `remote_jpeg_quality`）
+- 上行键鼠事件（键盘 / 鼠标移动 / 鼠标按键）
+- 独立客户端 `experiments/remote_client`（Win32 窗口 + JPEG 解码 + 键鼠采集）
+- 配置项 `remote_port` / `remote_jpeg_quality`
+- F12 控制模式全链路贯通（client → server → output_manager）
+
+### 与设计文档的偏差
+
+1. **架构图 `input 插件 → 串口`**：input 插件已移除，串口由 `OutputManager` 独占。
+2. **架构图 `宿主仲裁层`**：未创建——架构演进后不再需要。
+3. **第五节（仲裁规则）全部**：`t_human` / `pressed_keys` / `pressed_buttons` / `in_human_window` / 每帧调 `plugin_execute` 等机制未实现，也不再需要。
+4. **主线程帧循环**：实际是 `capture → policy.decide → script_host.OnFrame → script_host.GetDecision → SendScript`，没有"仲裁"步骤。
+5. **4d / 4e 阶段**：未按原计划执行。"人工接管"通过 F12 控制模式实现，不是逐帧窗口抑制。
+6. **验收流程第 5、6 步**（"人工按键 500ms 内 YOLO 决策被丢弃"、"人工停手后 YOLO 恢复"）未执行——没有共享时间窗口，不适用。
