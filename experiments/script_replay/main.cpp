@@ -14,7 +14,7 @@ using nlohmann::json;
 
 namespace {
 
-constexpr int kInvariantCount = 7;
+constexpr int kInvariantCount = 8;
 constexpr long long kFrameMs = 33;
 constexpr long long kMinEHoldMs = 100;
 constexpr long long kMaxEHoldMs = 2000;   // = combat_e_hold_max_ms（S9 多目标长按上限）
@@ -51,6 +51,7 @@ const char* InvariantName(int idx) {
         case 4: return "I5 两次E release 间隔 >= 800ms";
         case 5: return "I6 进入 state=3 的前一帧 facing 与 target 反号";
         case 6: return "I7 state 只能是 0/1/2/3/4";
+        case 7: return "I8 state 转移合法（0->1 / 1->0,1,2,3 / 2->0,2,4 / 3->0,3,4 / 4->0,1,4）";
         default: return "?";
     }
 }
@@ -184,6 +185,8 @@ int main(int argc, char** argv) {
     long long exempt_i5 = 0;
     bool interrupted_during_e = false;      // 当前 E 段内是否出现 me/target 丢失（I4 豁免）
     long long exempt_i4 = 0;
+    int prev_state = -1;
+    long long exempt_i8 = 0;    // 保留扩展位，本次不用
 
     long long replayed = 0;
     uint64_t last_frame_t = 0;
@@ -224,6 +227,25 @@ int main(int argc, char** argv) {
 
         CppScriptDebugInfo dbg{};
         script.GetDebugInfo(&dbg);
+
+        // I8: state 转移合法性（帧间检查）
+        if (prev_state >= 0) {
+            bool legal = false;
+            switch (prev_state) {
+                case 0: legal = (dbg.state == 0 || dbg.state == 1); break;
+                case 1: legal = (dbg.state == 0 || dbg.state == 1 || dbg.state == 2 || dbg.state == 3); break;
+                case 2: legal = (dbg.state == 0 || dbg.state == 2 || dbg.state == 4); break;
+                case 3: legal = (dbg.state == 0 || dbg.state == 3 || dbg.state == 4); break;
+                case 4: legal = (dbg.state == 0 || dbg.state == 1 || dbg.state == 4); break;
+                default: legal = false;
+            }
+            if (!legal) {
+                ++viol[7];
+                std::printf("[I8] 违例 frame=%llu: state %d -> %d\n",
+                            (unsigned long long)frame_idx, prev_state, dbg.state);
+            }
+        }
+        prev_state = dbg.state;
 
         // I1: me未锁定 -> 不动键 / 不发E
         if (!dbg.me_locked && (dbg.active_key != 0 || dbg.desired_e)) ++viol[0];
