@@ -208,6 +208,17 @@ SendScript 时更新这个集合；SetScriptPaused(true) 时遍历集合发 rele
 - 重新打开成功：清空队列，继续
 - 重新打开失败：日志报错，继续运行（后续 action 都会失败）
 
+## 六之二、Config 前缀
+
+宿主 LoadConfigFile 白名单已扩展，以下前缀的键会跳过严格校验、透传给对应模块：
+
+- capture_ : 采集插件
+- policy_  : 策略插件
+- input_  : （已废弃，插件已移除）
+- combat_ : 脚本层（CppScript::Init 自行解析）
+
+脚本层参数（e_common_min_ms / attack_react_min_ms 等）通过 combat_ 前缀传递。
+
 ## 七、迁移步骤
 
 ### 7.1 新增
