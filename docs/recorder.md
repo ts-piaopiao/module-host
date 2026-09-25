@@ -47,10 +47,16 @@ meta.json：版本、配置、开始时间、ABI 版本。
 
 启动时清理超过 7 天的 session_* 目录。
 
-## 五、config 新增
+## 五、命令行参数（不是 config）
 
-  record       0 或 1，默认 0
-  record_dir   会话根目录，默认 build\Release\records
+record 不是 config 键，而是命令行参数：
+
+  core.exe --record <会话根目录>
+
+- `--record <路径>`：启动时开启记录，会话目录建在指定路径下。
+- 未提供 `--record` 时不记录，行为与之前一致。
+- 记录路径由 main.cpp 解析，不经过 LoadConfigFile。
+- 启动失败（无法创建目录）打印 `[错误] 记录启动失败: <path>`，程序继续运行（只是不记录），不退出。
 
 ## 六、架构
 
@@ -111,7 +117,7 @@ main 开头：
 ON 5 帧循环里：
 - capture 之后、policy.decide 之前记帧号
 - policy.decide 之后：对每个 det 调 RecordDetection
-- decider.Update 之后：调 RecordDecision（me 状态从 Decider 拿或从 detections 推）
+- script_host.GetDecision 之后：调 RecordDecision（me 状态从 ScriptHost / 脚本内部获取）
 - 人工事件 pop 之后：对每个事件调 RecordHuman
 - LogPrintf 有 ERROR 级别的，调 RecordError（可选，暂缓）
 
