@@ -107,3 +107,57 @@ policy 插件内部有两个线程：
 ## 八、一句话原则
 
 先扩契约，再进推理线程；主线程不阻塞，推理线程独立跑。
+
+## 九、实现状态（截至当前）
+
+### 已完成
+
+- 5a 契约变更：`core_intent.frame` 字段（ABI 2 → 3），已完成
+- 5b ONNX Runtime 集成 + 独立推理线程：`src/real/yolo_policy.cpp`
+  - 推理线程独立跑，主线程 `plugin_decide` 拷贝像素快照
+  - `DirectML` 优先，失败自动回退 CPU
+  - 输入张量去重：相同输入跳过推理
+- 5c YOLOv8 后处理：已实现，含 decode / NMS / 尺寸门 / 额外过滤 / Tracker
+
+### 5d 动作决策：不在 policy 里
+
+`yolo_policy` 的 `plugin_decide` 只做一件事——把检测结果填进 `intent->detections_out`，`out->out_count = 0`。
+
+动作决策（打怪状态机）由宿主内的脚本承担，源文件 `src/core/script/cpp_script.cpp`，详见 `docs/stage7.md` 第十一节。
+
+### 配置项的实际状态
+
+设计稿列了 7 个 `policy_*` 配置键，实际只有 2 个真读配置：
+
+| 文档 | 实际 |
+|---|---|
+| `policy_model_path` 必填 | ✓ 读配置。默认值 `D:\dev\module-host\models\yolo11s.onnx`（非必填） |
+| `policy_input_size` 默认 640 | ✗ 硬编码 640（`kInputSize`），不读配置 |
+| `policy_conf` 默认 0.25 | ✗ 硬编码 0.7，不读配置 |
+| `policy_iou` 默认 0.45 | ✗ 硬编码 0.45，不读配置 |
+| `policy_fps` 默认 10 | ✓ 读配置，默认 10 |
+| `policy_gpu` 默认 1（DML） | ✗ 硬编码"DirectML 优先 + CPU 回退"，不读配置 |
+| `policy_labels` "me,monster" | ✗ 硬编码 2 类，不读配置 |
+
+额外支持一个文档未提的键：
+
+- `policy_verbose`：`"1"` 开启详细日志，其它值关闭。默认关闭。
+
+### 后处理的实现细节
+
+- **输出 shape**：动态读取 `out_shape[2]` 作为 anchor 数量，不假设 8400。
+- **类别数**：硬编码 2（me / monster）。
+- **decode**：cx/cy/w/h → `(v - pad) / scale / orig_dim`，归一化到 0~1。
+- **NMS**：自写 CPU 贪心，同类 IoU 阈值 0.45。
+- **尺寸门**：两处
+  - `PostprocessDetections`：`w < 20/640 && h < 20/640` 丢弃
+  - `FilterDetections`（cls=1）：面积 < `1500/(1920*1080)` 丢弃；`cx < 0.05` 或 `cx > 0.95` 丢弃；`conf < 0.25` 丢弃
+- **同类合并**：`FilterDetections` 里 IoU > 0.8 或中心距 < 0.03 时合并
+- **Tracker**：IoU + 距离双门限匹配（`kMatchDx/kMatchDy = 0.06`），30 帧丢失后删除。
+
+### 与设计文档的偏差
+
+1. **5d 归属**：设计稿说"动作决策后续单独设计"，实际在 `cpp_script.cpp` 里实现（打怪状态机）。
+2. **配置项粒度**：设计稿假设 7 个键都可调，实际只实现 2 个——其余硬编码。将来若要调参，需要补 `GetConfigValue` 分支。
+3. **推理线程的输出接口**：设计稿说"推理线程写 detections 缓存，主线程读"，实际用 `g_frame_mutex` + `g_result_mutex` 双向同步，主线程拷贝像素快照、读检测结果。
+4. **输入尺寸**：设计稿说可配 `policy_input_size`，实际固定 640。
