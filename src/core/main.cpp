@@ -213,6 +213,7 @@ int main(int argc, char* argv[]) {
     std::string plugins_dir;
     std::string config_path;
     std::string record_path;
+    std::string input_port_override;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             show_help = true;
@@ -236,6 +237,12 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             record_path = argv[++i];
+        } else if (std::strcmp(argv[i], "--input-port") == 0) {
+            if (i + 1 >= argc) {
+                LogPrintf("[错误] 缺失参数: --input-port\n");
+                return 1;
+            }
+            input_port_override = argv[++i];
         }
     }
 
@@ -246,6 +253,7 @@ int main(int argc, char* argv[]) {
         std::printf("  --plugins-dir <目录>   指定插件目录\n");
         std::printf("  --config <路径>       指定配置文件\n");
         std::printf("  --record <路径>       记录每帧检测与决策到 JSONL\n");
+        std::printf("  --input-port <端口>   指定串口，none 表示不打开串口（mock 模式）\n");
         std::printf("  --help, -h            显示本帮助\n");
         std::printf("  --version, -v         显示版本\n");
         return 0;
@@ -281,6 +289,13 @@ int main(int argc, char* argv[]) {
         }
         raw_config.assign(std::istreambuf_iterator<char>(raw_in),
                           std::istreambuf_iterator<char>());
+    }
+
+    if (!input_port_override.empty()) {
+        if (!raw_config.empty() && raw_config.back() != '\n') {
+            raw_config += '\n';
+        }
+        raw_config += "input_port = " + input_port_override + "\n";
     }
 
     if (config.has_log_path && !config.log_path.empty()) {
