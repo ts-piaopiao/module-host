@@ -14,7 +14,7 @@ using nlohmann::json;
 
 namespace {
 
-constexpr int kInvariantCount = 8;
+constexpr int kInvariantCount = 9;
 constexpr long long kFrameMs = 33;
 constexpr long long kMinEHoldMs = 100;
 constexpr long long kMaxEHoldMs = 2000;   // = combat_e_hold_max_ms（S9 多目标长按上限）
@@ -52,6 +52,7 @@ const char* InvariantName(int idx) {
         case 5: return "I6 进入 state=3 的前一帧 facing 与 target 反号";
         case 6: return "I7 state 只能是 0/1/2/3/4";
         case 7: return "I8 state 转移合法（0->1 / 1->0,1,2,3 / 2->0,2,4 / 3->0,3,4 / 4->0,1,4）";
+        case 8: return "I9 KEY 动作 press/release 合法（不重复按下 / 不未按先放）";
         default: return "?";
     }
 }
@@ -187,6 +188,7 @@ int main(int argc, char** argv) {
     long long exempt_i4 = 0;
     int prev_state = -1;
     long long exempt_i8 = 0;    // 保留扩展位，本次不用
+    std::map<int32_t, bool> key_down;   // key_code -> 当前是否按下（I9）
 
     long long replayed = 0;
     uint64_t last_frame_t = 0;
@@ -224,6 +226,25 @@ int main(int argc, char** argv) {
         core_decision dec{};
         dec.out_count = 0;
         script.GetDecision(&dec);
+
+        // I9: KEY 动作 press/release 合法（逐帧累积）
+        for (uint32_t ai = 0; ai < dec.out_count; ++ai) {
+            const core_action& act = dec.actions[ai];
+            if (act.kind != CORE_ACTION_KEY) continue;
+            const int32_t code = act.a;
+            const bool want_down = (act.b == 1);
+            const bool is_down = key_down[code];
+            if (want_down && is_down) {
+                ++viol[8];
+                std::printf("[I9] 违例 frame=%llu: key 0x%02X 重复按下（未释放又按）\n",
+                            (unsigned long long)frame_idx, (unsigned)code);
+            } else if (!want_down && !is_down) {
+                ++viol[8];
+                std::printf("[I9] 违例 frame=%llu: key 0x%02X 未按下就释放\n",
+                            (unsigned long long)frame_idx, (unsigned)code);
+            }
+            key_down[code] = want_down;
+        }
 
         CppScriptDebugInfo dbg{};
         script.GetDebugInfo(&dbg);
