@@ -214,7 +214,7 @@ SendScript 时更新这个集合；SetScriptPaused(true) 时遍历集合发 rele
 
 - capture_ : 采集插件
 - policy_  : 策略插件
-- input_  : （已废弃，插件已移除）
+- input_  : 由 OutputManager 读取（input_port / input_baud）
 - combat_ : 脚本层（CppScript::Init 自行解析）
 
 脚本层参数（e_common_min_ms / attack_react_min_ms 等）通过 combat_ 前缀传递。
@@ -269,8 +269,8 @@ SendScript 时更新这个集合；SetScriptPaused(true) 时遍历集合发 rele
 
 ### 8.3 回归
 
-- 假插件验收 13/13 PASS
-- runtime_errors 6/6 PASS
+- 假插件验收 11/11 PASS
+- runtime_errors 5/5 PASS
 - 真实硬件端到端仍正常
 
 ## 九、一句话原则
