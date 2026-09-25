@@ -12,7 +12,7 @@
 
 一句话原则：先锁契约，再锁加载类错误，最后锁正常闭环和运行期错误。
 
-一键全量验收：`powershell -ExecutionPolicy Bypass -File scripts\run_all.ps1`（含阶段 0/1/2 + script replay，共 10 步）
+一键全量验收：`powershell -ExecutionPolicy Bypass -File scripts\run_all.ps1`（含阶段 0/1/2 + script replay + output probe，共 11 步，不依赖硬件）
 
 ---
 
@@ -133,6 +133,17 @@ real_test.ini 示例：
     input_port = COM6
     input_baud = 115200
 
+### 真机验收（可选）
+
+端到端验收脚本（需采集卡 + 串口就绪）：
+
+    powershell -ExecutionPolicy Bypass -File scripts\run_real_acceptance.ps1
+
+脚本会向系统发送**真实键盘输入**（默认每帧按一次 I）。运行前请打开记事本并让光标在输入区。
+验收成功输出 `PASS real_e2e ...`，退出码 0。
+
+本脚本不在 `run_all.ps1` 主流程内——它依赖真实硬件，不适合无硬件环境。
+
 ### 前置条件
 
 - 采集卡插在 USB 口，被系统识别为视频采集设备
@@ -164,12 +175,16 @@ real_test.ini 示例：
 | `--config <路径>` | 指定配置文件 |
 | `--help, -h` | 显示帮助并退出，优先级最高 |
 | `--version, -v` | 显示版本并退出，优先级最高 |
+| `--record <路径>` | 记录每帧检测与决策到 JSONL |
+| `--input-port <端口>` | 指定串口，优先级高于配置文件；`none` 表示 mock 模式（不打开串口） |
 
 ### 优先级
 
 1. `--help` / `--version` 出现即早退，不读配置文件，不解析插件目录。
 2. `--plugins-dir` 命令行覆盖配置文件中的 `plugins_dir`。
-3. 都没有时打印 `[错误] 缺失参数: --plugins-dir` 并退出非 0。
+3. `--input-port` 命令行覆盖配置文件中的 `input_port`；`none` 表示 mock 模式。
+4. `--record` 命令行开启记录；未提供时不记录。
+5. 都没有时打印 `[错误] 缺失参数: --plugins-dir` 并退出非 0。
 
 ### 配置文件格式
 
