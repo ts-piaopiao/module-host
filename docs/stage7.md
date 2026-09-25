@@ -126,3 +126,75 @@ main.cpp 不变，仍然只调 decider.Update。
 ## 十、一句话原则
 
 先动起来，再拟人化；先硬编码，再走配置。
+
+## 十一、实现状态（截至当前）
+
+### 已完成
+
+7a–7c 的核心目标已实现，但形式与原设计不同：
+
+- 战斗状态机：已实现，在 `src/core/script/cpp_script.cpp`
+- 参数从 config 读：已实现，前缀为 `combat_*`（非 `decider_*`）
+- E 时长分布、攻击反应延迟、RECOVERY→CHASE 延迟：已实现
+
+### 未采用的设计
+
+设计稿里的 `class Combat`（`src/core/combat.h` / `combat.cpp`）未创建。
+
+`Decider` 类也未创建（见 `docs/stage6.md` 第九节）。
+
+### 实际实现
+
+决策逻辑在 `CppScript`（`src/core/script/cpp_script.cpp`）。
+
+状态机有 5 个状态：`IDLE / CHASE / ATTACK / ATTACK_TURN / RECOVERY`。
+
+| 状态 | 职责 |
+|---|---|
+| IDLE | me 或 target 未锁定 |
+| CHASE | 朝目标移动（含贴脸后退、面向翻转） |
+| ATTACK | 正面攻击带内，按 E |
+| ATTACK_TURN | 背面进带，先转身再按 E |
+| RECOVERY | 攻击后冷却 |
+
+### 配置项（实际使用）
+
+前缀 `combat_*`：
+
+- `combat_e_common_min_ms` / `combat_e_common_max_ms` / `combat_e_common_prob`
+- `combat_e_rare_lo_min_ms` / `combat_e_rare_lo_max_ms`
+- `combat_e_rare_hi_min_ms` / `combat_e_rare_hi_max_ms`
+- `combat_attack_react_min_ms` / `combat_attack_react_max_ms`
+- `combat_recovery_chase_min_ms` / `combat_recovery_chase_max_ms`
+
+原设计稿的 `decider_*` 前缀（`decider_attack_band` / `decider_recovery_ms` /
+`decider_monster_lose_ms` 等）未实现；这些参数目前硬编码在 `cpp_script.cpp`
+的匿名命名空间和 `Impl` 常量里。
+
+### 与设计文档的偏差
+
+1. 状态机 5 个状态，设计稿只列了 4 个（idle / moving / attack / recovery）。
+   实际把"moving"拆成 `CHASE` 和 `ATTACK_TURN`，两者行为不同。
+2. 多目标长按逻辑曾实现过（`e_long_hold` + `combat_e_hold_max_ms`），已删除。
+   理由：过度设计，多目标与单目标行为一致（都是单击 E）。
+3. 7d 高级特性只实现了一部分：
+   - 随机延迟（E 时长、攻击反应、RECOVERY→CHASE）：已实现
+   - me 速度外推、双击：未实现
+4. 7b / 7c / 7d 的分步边界在实际开发中被打破——先实现了完整状态机，
+   再逐步精修；不严格按 7a→7b→7c→7d 推进。
+
+### 验收方式
+
+通过 `experiments/script_replay` 回放工具 + 9 条 invariant 验证：
+
+- I1：me 未锁定 → 不动键 / 不发 E
+- I2：active_key 只能是 0x00 / 0x25 / 0x27
+- I3：desired_e=true → state 只能是 ATTACK / ATTACK_TURN
+- I4：desired_e 连续段时长 >= 100ms（无上限）
+- I5：两次 E release 间隔 >= 800ms（被 IDLE 打断时豁免）
+- I6：进入 ATTACK_TURN 的前一帧 facing 与 target 反号
+- I7：state 只能是 0/1/2/3/4
+- I8：state 跨帧转移合法
+- I9：KEY 动作 press/release 合法（不重复按下 / 不未按先放）
+
+入口脚本：`scripts/run_script_acceptance.ps1`，纳入 `scripts/run_all.ps1` 主验收流。
