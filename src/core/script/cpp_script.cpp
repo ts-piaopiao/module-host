@@ -206,7 +206,39 @@ bool IsInBand(const TargetLockState& t, const MeLockState& me) {
     return dx >= kBandXMin && dx <= x_max;
 }
 
+bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy, float t_h) {
+    const float t_fy = t_cy + t_h * 0.5f;
+    const float dx = std::fabs(t_cx - me_fx);
+    const float dy = t_cy - me_fy;
+    if (dy < kBandYMin || dy > kBandYMax) return false;
+    const float x_max = (std::fabs(t_fy - me_fy) < kSamePlatY) ? kBandXMaxSame
+                                                                : kBandXMaxCross;
+    return dx >= kBandXMin && dx <= x_max;
+}
+
 }  // namespace
+
+struct CombatConfig {
+    // E 时长（偏态）
+    int e_common_min_ms = 160;
+    int e_common_max_ms = 190;
+    int e_common_prob = 70;
+    int e_rare_lo_min_ms = 120;
+    int e_rare_lo_max_ms = 160;
+    int e_rare_hi_min_ms = 190;
+    int e_rare_hi_max_ms = 300;
+
+    // 多目标长按
+    int e_hold_max_ms = 2000;
+
+    // CHASE → ATTACK 延迟
+    int attack_react_min_ms = 80;
+    int attack_react_max_ms = 200;
+
+    // RECOVERY → CHASE 延迟
+    int recovery_chase_min_ms = 30;
+    int recovery_chase_max_ms = 100;
+};
 
 struct CppScript::Impl {
     static constexpr int kETapMsMin = 150;
@@ -252,18 +284,182 @@ struct CppScript::Impl {
     bool reversing = false;
     uint64_t reverse_start_ms = 0;
 
+    // 攻击延迟 (S8)
+    bool pending_attack = false;
+    uint64_t pending_attack_start_ms = 0;
+    int pending_attack_delay_ms = 0;
+
+    // RECOVERY 后延迟 (S8)
+    bool pending_chase = false;
+    uint64_t pending_chase_start_ms = 0;
+    int pending_chase_delay_ms = 0;
+
+    // E 长按 (S9)
+    bool e_long_hold = false;
+    uint64_t e_long_hold_start_ms = 0;
+
+    CombatConfig cfg;
+
     int active_key = 0;
     int last_pressed = 0;
     bool desired_e = false;
+
+    static int CountInBand(const ScriptWorld& world,
+                           float me_fx, float me_fy, const Impl* impl) {
+        (void)impl;
+        if (world.dets == nullptr) return 0;
+        int count = 0;
+        for (uint32_t i = 0; i < world.dets->count; ++i) {
+            const auto& d = world.dets->items[i];
+            if (d.cls != 1) continue;
+            const float fy = d.cy + d.h * 0.5f;
+            if (std::fabs(fy - me_fy) > kSamePlatY) continue;
+            if (IsInBand(me_fx, me_fy, d.cx, d.cy, d.h)) count++;
+        }
+        return count;
+    }
 };
+
+static void Trim(const std::string& s, std::string* out) {
+    size_t begin = 0;
+    size_t end = s.size();
+    while (begin < end && (s[begin] == ' ' || s[begin] == '\t' || s[begin] == '\r' || s[begin] == '\n')) {
+        ++begin;
+    }
+    while (end > begin && (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r' || s[end - 1] == '\n')) {
+        --end;
+    }
+    *out = s.substr(begin, end - begin);
+}
+
+static bool ParseInt(const std::string& text, int* out) {
+    if (text.empty()) return false;
+    char* end = nullptr;
+    const long value = std::strtol(text.c_str(), &end, 10);
+    if (end == text.c_str() || *end != '\0') return false;
+    *out = static_cast<int>(value);
+    return true;
+}
+
+static void NormalizeConfig(CombatConfig* cfg) {
+    if (cfg->e_common_max_ms < cfg->e_common_min_ms) {
+        cfg->e_common_max_ms = cfg->e_common_min_ms;
+    }
+    if (cfg->e_rare_lo_max_ms < cfg->e_rare_lo_min_ms) {
+        cfg->e_rare_lo_max_ms = cfg->e_rare_lo_min_ms;
+    }
+    if (cfg->e_rare_hi_max_ms < cfg->e_rare_hi_min_ms) {
+        cfg->e_rare_hi_max_ms = cfg->e_rare_hi_min_ms;
+    }
+    if (cfg->attack_react_max_ms < cfg->attack_react_min_ms) {
+        cfg->attack_react_max_ms = cfg->attack_react_min_ms;
+    }
+    if (cfg->recovery_chase_max_ms < cfg->recovery_chase_min_ms) {
+        cfg->recovery_chase_max_ms = cfg->recovery_chase_min_ms;
+    }
+    if (cfg->e_common_prob < 0) cfg->e_common_prob = 0;
+    if (cfg->e_common_prob > 100) cfg->e_common_prob = 100;
+    if (cfg->e_hold_max_ms < 1) cfg->e_hold_max_ms = 1;
+}
+
+static int SampleEHoldMs(const CombatConfig& cfg) {
+    const int r = std::rand() % 100;
+    if (r < cfg.e_common_prob) {
+        const int span = cfg.e_common_max_ms - cfg.e_common_min_ms + 1;
+        return cfg.e_common_min_ms + (std::rand() % span);
+    }
+    // rare：两段等分
+    const bool lo = (std::rand() % 2) == 0;
+    if (lo) {
+        const int span = cfg.e_rare_lo_max_ms - cfg.e_rare_lo_min_ms + 1;
+        return cfg.e_rare_lo_min_ms + (std::rand() % span);
+    } else {
+        const int span = cfg.e_rare_hi_max_ms - cfg.e_rare_hi_min_ms + 1;
+        return cfg.e_rare_hi_min_ms + (std::rand() % span);
+    }
+}
 
 CppScript::CppScript() : impl_(new Impl()) {}
 CppScript::~CppScript() { delete impl_; }
 
 bool CppScript::Init(const std::string& config) {
-    (void)config;
     std::srand(static_cast<unsigned>(std::time(nullptr)));
+
+    impl_->cfg = CombatConfig{};
+
+    if (!config.empty()) {
+        size_t pos = 0;
+        const std::string content(config);
+        while (pos <= content.size()) {
+            size_t nl = content.find('\n', pos);
+            if (nl == std::string::npos) nl = content.size();
+            std::string line = content.substr(pos, nl - pos);
+            pos = nl + 1;
+
+            std::string trimmed;
+            Trim(line, &trimmed);
+            if (trimmed.empty() || trimmed[0] == '#') continue;
+
+            const size_t comment = trimmed.find('#');
+            if (comment != std::string::npos) {
+                trimmed = trimmed.substr(0, comment);
+                Trim(trimmed, &trimmed);
+                if (trimmed.empty()) continue;
+            }
+
+            const size_t eq = trimmed.find('=');
+            if (eq == std::string::npos) continue;
+
+            std::string key = trimmed.substr(0, eq);
+            std::string value = trimmed.substr(eq + 1);
+            Trim(key, &key);
+            Trim(value, &value);
+
+            int num = 0;
+            if (!ParseInt(value, &num)) continue;
+
+            if (key == "combat_e_common_min_ms") {
+                impl_->cfg.e_common_min_ms = num;
+            } else if (key == "combat_e_common_max_ms") {
+                impl_->cfg.e_common_max_ms = num;
+            } else if (key == "combat_e_common_prob") {
+                impl_->cfg.e_common_prob = num;
+            } else if (key == "combat_e_rare_lo_min_ms") {
+                impl_->cfg.e_rare_lo_min_ms = num;
+            } else if (key == "combat_e_rare_lo_max_ms") {
+                impl_->cfg.e_rare_lo_max_ms = num;
+            } else if (key == "combat_e_rare_hi_min_ms") {
+                impl_->cfg.e_rare_hi_min_ms = num;
+            } else if (key == "combat_e_rare_hi_max_ms") {
+                impl_->cfg.e_rare_hi_max_ms = num;
+            } else if (key == "combat_e_hold_max_ms") {
+                impl_->cfg.e_hold_max_ms = num;
+            } else if (key == "combat_attack_react_min_ms") {
+                impl_->cfg.attack_react_min_ms = num;
+            } else if (key == "combat_attack_react_max_ms") {
+                impl_->cfg.attack_react_max_ms = num;
+            } else if (key == "combat_recovery_chase_min_ms") {
+                impl_->cfg.recovery_chase_min_ms = num;
+            } else if (key == "combat_recovery_chase_max_ms") {
+                impl_->cfg.recovery_chase_max_ms = num;
+            }
+            // 未知键忽略
+        }
+    }
+
+    NormalizeConfig(&impl_->cfg);
+
+    std::printf("[script] 配置加载完成: e_common=[%d,%d]%%%d, e_rare_lo=[%d,%d], e_rare_hi=[%d,%d], hold_max=%d, react=[%d,%d], chase=[%d,%d]\n",
+        impl_->cfg.e_common_min_ms, impl_->cfg.e_common_max_ms, impl_->cfg.e_common_prob,
+        impl_->cfg.e_rare_lo_min_ms, impl_->cfg.e_rare_lo_max_ms,
+        impl_->cfg.e_rare_hi_min_ms, impl_->cfg.e_rare_hi_max_ms,
+        impl_->cfg.e_hold_max_ms,
+        impl_->cfg.attack_react_min_ms, impl_->cfg.attack_react_max_ms,
+        impl_->cfg.recovery_chase_min_ms, impl_->cfg.recovery_chase_max_ms);
+    std::fflush(stdout);
+
     std::printf("[script] 脚本已启动\n");
+    std::fflush(stdout);
     impl_->inited = true;
     return true;
 }
@@ -286,6 +482,9 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             impl_->reversing = false;
             impl_->turn_key_pressed = false;
             impl_->turn_e_pressed = false;
+            impl_->pending_attack = false;
+            impl_->pending_chase = false;
+            impl_->e_long_hold = false;
         }
     } else {
         const bool in_band = IsInBand(impl_->target, impl_->me);
@@ -300,14 +499,14 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             case Impl::State::IDLE:
                 if (impl_->me.valid && impl_->target.has) {
                     if (in_band && is_front && fresh_target) {
-                        impl_->state = Impl::State::ATTACK;
-                        impl_->attack_start_ms = now;
-                        impl_->e_pressed = true;
-                        impl_->current_e_tap_ms =
-                            Impl::kETapMsMin +
-                            (std::rand() % (Impl::kETapMsMax - Impl::kETapMsMin + 1));
-                        std::printf("[script] E 按下时长: %d ms\n",
-                                    impl_->current_e_tap_ms);
+                        // 正面进带：先进入 pending，延迟后再按 E (S8)
+                        impl_->state = Impl::State::CHASE;
+                        impl_->pending_attack = true;
+                        impl_->pending_attack_start_ms = now;
+                        impl_->pending_attack_delay_ms = impl_->cfg.attack_react_min_ms +
+                            (std::rand() % (impl_->cfg.attack_react_max_ms - impl_->cfg.attack_react_min_ms + 1));
+                        std::printf("[script] 攻击反应延迟: %d ms\n",
+                                    impl_->pending_attack_delay_ms);
                         std::fflush(stdout);
                     } else if (in_band && !is_front && fresh_target) {
                         impl_->state = Impl::State::ATTACK_TURN;
@@ -330,19 +529,30 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 
             case Impl::State::CHASE:
                 if (!impl_->me.valid || !impl_->target.has) {
+                    impl_->pending_attack = false;
                     impl_->state = Impl::State::IDLE;
                     impl_->reversing = false;
-                } else if (in_band && is_front && fresh_target) {
-                    impl_->state = Impl::State::ATTACK;
-                    impl_->attack_start_ms = now;
-                    impl_->e_pressed = true;
-                    impl_->current_e_tap_ms =
-                        Impl::kETapMsMin +
-                        (std::rand() % (Impl::kETapMsMax - Impl::kETapMsMin + 1));
-                    std::printf("[script] E 按下时长: %d ms\n",
-                                impl_->current_e_tap_ms);
-                    std::fflush(stdout);
-                } else if (in_band && !is_front && fresh_target) {
+                }
+                // 已在 pending：检查延迟
+                else if (impl_->pending_attack) {
+                    if (now - impl_->pending_attack_start_ms >=
+                        static_cast<uint64_t>(impl_->pending_attack_delay_ms)) {
+                        impl_->pending_attack = false;
+                        // 延迟到点，重新检查
+                        if (in_band && is_front && fresh_target) {
+                            impl_->state = Impl::State::ATTACK;
+                            impl_->attack_start_ms = now;
+                            impl_->e_pressed = true;
+                            impl_->current_e_tap_ms = SampleEHoldMs(impl_->cfg);
+                            impl_->e_long_hold = false;
+                            std::printf("[script] E 按下时长: %d ms\n",
+                                        impl_->current_e_tap_ms);
+                            std::fflush(stdout);
+                        }
+                    }
+                }
+                // 背面进带：S7 逻辑（转身）
+                else if (in_band && !is_front && fresh_target) {
                     if (now - impl_->last_dir_ms >= Impl::kTurnBounceMs) {
                         impl_->state = Impl::State::ATTACK_TURN;
                         impl_->turn_phase = 0;
@@ -357,7 +567,19 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         impl_->turn_key_pressed = false;
                         impl_->turn_e_pressed = false;
                     }
-                } else if (too_close) {
+                }
+                // 正面进带：设 pending (S8)
+                else if (in_band && is_front && fresh_target) {
+                    impl_->pending_attack = true;
+                    impl_->pending_attack_start_ms = now;
+                    impl_->pending_attack_delay_ms = impl_->cfg.attack_react_min_ms +
+                        (std::rand() % (impl_->cfg.attack_react_max_ms - impl_->cfg.attack_react_min_ms + 1));
+                    std::printf("[script] 攻击反应延迟: %d ms\n",
+                                impl_->pending_attack_delay_ms);
+                    std::fflush(stdout);
+                }
+                // 贴脸后退：S7 逻辑
+                else if (too_close) {
                     if (!impl_->reversing) {
                         impl_->reversing = true;
                         impl_->reverse_start_ms = now;
@@ -365,17 +587,58 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 }
                 break;
 
-            case Impl::State::ATTACK:
+            case Impl::State::ATTACK: {
                 if (!impl_->me.valid || !impl_->target.has) {
                     impl_->state = Impl::State::IDLE;
                     impl_->e_pressed = false;
-                } else if (now - impl_->attack_start_ms >=
-                           static_cast<uint64_t>(impl_->current_e_tap_ms)) {
-                    impl_->e_pressed = false;
-                    impl_->state = Impl::State::RECOVERY;
-                    impl_->recovery_start_ms = now;
+                    impl_->e_long_hold = false;
+                    break;
+                }
+
+                const int band_count = Impl::CountInBand(world,
+                    impl_->me.lock_fx, impl_->me.lock_fy, impl_);
+
+                if (band_count > 1) {
+                    // 多目标：长按
+                    if (!impl_->e_long_hold) {
+                        impl_->e_long_hold = true;
+                        impl_->e_long_hold_start_ms = now;
+                        std::printf("[script] 多目标长按 E 开始 (带内 %d 只)\n", band_count);
+                        std::fflush(stdout);
+                    }
+                    // 保持 e_pressed = true
+                    // 硬上限兜底
+                    if (now - impl_->e_long_hold_start_ms >=
+                        static_cast<uint64_t>(impl_->cfg.e_hold_max_ms)) {
+                        impl_->e_pressed = false;
+                        impl_->e_long_hold = false;
+                        impl_->state = Impl::State::RECOVERY;
+                        impl_->recovery_start_ms = now;
+                        std::printf("[script] 长按达到硬上限，松开 E\n");
+                        std::fflush(stdout);
+                    }
+                } else {
+                    // band_count <= 1：单击
+                    if (impl_->e_long_hold) {
+                        // 从长按切到单击：释放
+                        impl_->e_long_hold = false;
+                        impl_->e_pressed = false;
+                        impl_->state = Impl::State::RECOVERY;
+                        impl_->recovery_start_ms = now;
+                        std::printf("[script] 带内仅剩 %d 只，松开 E\n", band_count);
+                        std::fflush(stdout);
+                    } else {
+                        // 正常单击：时长到点则释放
+                        if (now - impl_->attack_start_ms >=
+                            static_cast<uint64_t>(impl_->current_e_tap_ms)) {
+                            impl_->e_pressed = false;
+                            impl_->state = Impl::State::RECOVERY;
+                            impl_->recovery_start_ms = now;
+                        }
+                    }
                 }
                 break;
+            }
 
             case Impl::State::ATTACK_TURN: {
                 if (impl_->turn_phase == 0) {
@@ -414,13 +677,25 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 
             case Impl::State::RECOVERY:
                 if (!impl_->me.valid || !impl_->target.has) {
+                    impl_->pending_chase = false;
                     impl_->state = Impl::State::IDLE;
-                } else if (now - impl_->recovery_start_ms >= Impl::kRecoveryMs) {
-                    impl_->state = Impl::State::CHASE;
+                }
+                else if (now - impl_->recovery_start_ms >= Impl::kRecoveryMs) {
+                    if (!impl_->pending_chase) {
+                        impl_->pending_chase = true;
+                        impl_->pending_chase_start_ms = now;
+                        impl_->pending_chase_delay_ms = impl_->cfg.recovery_chase_min_ms +
+                            (std::rand() % (impl_->cfg.recovery_chase_max_ms - impl_->cfg.recovery_chase_min_ms + 1));
+                    }
+                    if (now - impl_->pending_chase_start_ms >=
+                        static_cast<uint64_t>(impl_->pending_chase_delay_ms)) {
+                        impl_->pending_chase = false;
+                        impl_->state = Impl::State::CHASE;
+                    }
                 }
                 break;
         }
-    }
+    } // End of else block (me.valid && target.has)
 
     // 决定按键
     int desired_dir = 0;
@@ -505,7 +780,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             case Impl::State::ATTACK_TURN: state_str = "ATTACK_TURN"; break;
             case Impl::State::RECOVERY: state_str = "RECOVERY"; break;
         }
-        std::printf("[script] frame=%llu state=%s facing=%d me_locked=%d me=(%.3f,%.3f) target_locked=%d target_cx=%.3f key=0x%02X e=%d\n",
+        std::printf("[script] frame=%llu state=%s facing=%d me_locked=%d me=(%.3f,%.3f) target_locked=%d target_cx=%.3f key=0x%02X e=%d hold=%d\n",
                     (unsigned long long)world.frame_index,
                     state_str,
                     impl_->facing,
@@ -514,10 +789,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     impl_->target.locked ? 1 : 0,
                     impl_->target.cx,
                     impl_->active_key,
-                    desired_e ? 1 : 0);
+                    desired_e ? 1 : 0,
+                    impl_->e_long_hold ? 1 : 0);
         std::fflush(stdout);
     }
-}
+} // End of OnFrame
 
 void CppScript::GetDecision(core_decision* out) {
     out->out_count = 0;
@@ -560,10 +836,10 @@ void CppScript::GetDecision(core_decision* out) {
         }
         last_desired_e = impl_->desired_e;
     }
-}
+} // End of GetDecision
 
 void CppScript::Shutdown() {
     std::printf("[script] 脚本已停止\n");
     std::fflush(stdout);
     impl_->inited = false;
-}
+} // End of Shutdown
