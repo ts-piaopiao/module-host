@@ -127,21 +127,23 @@ policy 插件内部有两个线程：
 
 ### 配置项的实际状态
 
-设计稿列了 7 个 `policy_*` 配置键，实际只有 2 个真读配置：
+设计稿列了 7 个 `policy_*` 配置键，已全部实现读取：
 
-| 文档 | 实际 |
-|---|---|
-| `policy_model_path` 必填 | ✓ 读配置。默认值 `D:\dev\module-host\models\yolo11s.onnx`（非必填） |
-| `policy_input_size` 默认 640 | ✗ 硬编码 640（`kInputSize`），不读配置 |
-| `policy_conf` 默认 0.25 | ✗ 硬编码 0.7，不读配置 |
-| `policy_iou` 默认 0.45 | ✗ 硬编码 0.45，不读配置 |
-| `policy_fps` 默认 10 | ✓ 读配置，默认 10 |
-| `policy_gpu` 默认 1（DML） | ✗ 硬编码"DirectML 优先 + CPU 回退"，不读配置 |
-| `policy_labels` "me,monster" | ✗ 硬编码 2 类，不读配置 |
+| 键 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `policy_model_path` | 字符串 | `D:\dev\module-host\models\yolo11s.onnx` | ONNX 模型路径 |
+| `policy_input_size` | 整数 > 0 | 640 | 模型输入尺寸 |
+| `policy_conf` | 浮点 (0,1] | 0.7 | 置信度阈值 |
+| `policy_iou` | 浮点 (0,1] | 0.45 | NMS IoU 阈值 |
+| `policy_fps` | 整数 > 0 | 10 | 推理频率（每秒） |
+| `policy_gpu` | 0 / 1 | 1 | 1 = DirectML 优先（失败回退 CPU），0 = 纯 CPU |
+| `policy_labels` | 逗号分隔 | `me,monster` | 类别名；当前代码只用数量推 `num_classes`，不做名到类的映射 |
 
 额外支持一个文档未提的键：
 
 - `policy_verbose`：`"1"` 开启详细日志，其它值关闭。默认关闭。
+
+非法值（空 / 越界 / 非数字）保持默认。
 
 ### 后处理的实现细节
 
@@ -158,6 +160,4 @@ policy 插件内部有两个线程：
 ### 与设计文档的偏差
 
 1. **5d 归属**：设计稿说"动作决策后续单独设计"，实际在 `cpp_script.cpp` 里实现（打怪状态机）。
-2. **配置项粒度**：设计稿假设 7 个键都可调，实际只实现 2 个——其余硬编码。将来若要调参，需要补 `GetConfigValue` 分支。
-3. **推理线程的输出接口**：设计稿说"推理线程写 detections 缓存，主线程读"，实际用 `g_frame_mutex` + `g_result_mutex` 双向同步，主线程拷贝像素快照、读检测结果。
-4. **输入尺寸**：设计稿说可配 `policy_input_size`，实际固定 640。
+2. **推理线程的输出接口**：设计稿说"推理线程写 detections 缓存，主线程读"，实际用 `g_frame_mutex` + `g_result_mutex` 双向同步，主线程拷贝像素快照、读检测结果。
