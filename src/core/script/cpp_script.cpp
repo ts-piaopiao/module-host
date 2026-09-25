@@ -843,3 +843,17 @@ void CppScript::Shutdown() {
     std::fflush(stdout);
     impl_->inited = false;
 } // End of Shutdown
+
+void CppScript::GetDebugInfo(CppScriptDebugInfo* out) const {
+    if (out == nullptr) return;
+    out->state = static_cast<int>(impl_->state);
+    out->facing = impl_->facing;
+    out->me_locked = impl_->me.locked;
+    out->me_fx = impl_->me.fx;
+    out->me_fy = impl_->me.fy;
+    out->target_locked = impl_->target.locked;
+    out->target_cx = impl_->target.cx;
+    out->active_key = impl_->active_key;
+    out->desired_e = impl_->desired_e;
+    out->e_long_hold = impl_->e_long_hold;
+}
