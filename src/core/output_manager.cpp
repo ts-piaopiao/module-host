@@ -178,7 +178,7 @@ bool OpenPort(const std::string& port, DWORD baud, HANDLE* out_handle) {
     return true;
 }
 
-bool TranslateAndSend(HANDLE h, const core_action& a) {
+bool TranslateAndSend(HANDLE h, const core_action& a, bool mock) {
     std::string cmd;
     switch (a.kind) {
     case CORE_ACTION_NONE:
@@ -211,6 +211,10 @@ bool TranslateAndSend(HANDLE h, const core_action& a) {
         return true;
     }
     if (cmd.empty()) return true;
+    if (mock) {
+        std::fprintf(stderr, "[output/mock] %s\n", cmd.c_str());
+        return true;
+    }
     return SendCommand(h, cmd);
 }
 
@@ -219,6 +223,7 @@ bool TranslateAndSend(HANDLE h, const core_action& a) {
 struct OutputManager::Impl {
     HANDLE port = INVALID_HANDLE_VALUE;
     std::string port_name;
+    bool mock_mode = false;
     DWORD baud_rate = 115200;
 
     std::mutex mutex;
@@ -248,8 +253,16 @@ bool OutputManager::Start(const std::string& config) {
 
     ParseConfig(config, &impl_->port_name, &impl_->baud_rate);
 
-    if (!OpenPort(impl_->port_name, impl_->baud_rate, &impl_->port)) {
-        return false;
+    if (impl_->port_name == "none") {
+        impl_->mock_mode = true;
+        impl_->port = INVALID_HANDLE_VALUE;
+        std::fprintf(stderr, "[output] mock 模式：不打开真实串口\n");
+        std::fprintf(stderr, "[output/mock] mk.release\n");
+    } else {
+        impl_->mock_mode = false;
+        if (!OpenPort(impl_->port_name, impl_->baud_rate, &impl_->port)) {
+            return false;
+        }
     }
 
     impl_->started = true;
@@ -268,7 +281,7 @@ bool OutputManager::Start(const std::string& config) {
                 impl_->queue.pop_front();
             }
 
-            bool ok = TranslateAndSend(impl_->port, a);
+            bool ok = TranslateAndSend(impl_->port, a, impl_->mock_mode);
             if (!ok) {
                 impl_->consecutive_failures++;
                 std::fprintf(stderr, "[output] 写串口失败, 连续 %d 次\n", impl_->consecutive_failures);
