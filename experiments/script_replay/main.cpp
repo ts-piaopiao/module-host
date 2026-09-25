@@ -17,7 +17,8 @@ namespace {
 constexpr int kInvariantCount = 7;
 constexpr long long kFrameMs = 33;
 constexpr long long kMinEHoldMs = 100;
-constexpr long long kMaxEHoldMs = 500;
+constexpr long long kMaxEHoldMs = 2000;   // = combat_e_hold_max_ms（S9 多目标长按上限）
+constexpr long long kMaxEHoldSlackMs = kFrameMs;  // 硬上限到点后最早也要下一帧才观察到释放
 constexpr int64_t kMinEGapMs = 800;
 
 struct DetRaw {
@@ -46,7 +47,7 @@ const char* InvariantName(int idx) {
         case 0: return "I1 me未锁定 -> 不动 active_key / 不发E";
         case 1: return "I2 active_key 只能是 0x00/0x25/0x27/0x45";
         case 2: return "I3 desired_e=true -> state 只能是 2/3";
-        case 3: return "I4 desired_e 连续帧时长 [100,500]ms";
+        case 3: return "I4 desired_e 连续帧时长 [100,2000]ms";
         case 4: return "I5 两次E release 间隔 >= 800ms";
         case 5: return "I6 进入 state=3 的前一帧 facing 与 target 反号";
         case 6: return "I7 state 只能是 0/1/2/3/4";
@@ -121,7 +122,17 @@ int main(int argc, char** argv) {
             ++bad_lines;
             continue;
         }
-        if (j.value("type", "") != "det") continue;
+        const std::string type = j.value("type", "");
+        const uint64_t frame = j.value("frame", 0ULL);
+        const uint64_t t = j.value("t", 0ULL);
+
+        // 无检测的帧只有 dec 行：仍要回放（否则帧数被数少，E 时长/间隔失真）
+        if (type == "dec") {
+            FrameData& fd = frames[frame];
+            if (fd.t == 0) fd.t = t;
+            continue;
+        }
+        if (type != "det") continue;
 
         DetRaw d;
         d.cls = j.value("cls", 0);
@@ -132,10 +143,8 @@ int main(int argc, char** argv) {
         d.w = j.value("w", 0.0f);
         d.h = j.value("h", 0.0f);
 
-        const uint64_t frame = j.value("frame", 0ULL);
-        const uint64_t t = j.value("t", 0ULL);
         FrameData& fd = frames[frame];
-        if (fd.dets.empty()) fd.t = t;
+        if (fd.t == 0) fd.t = t;
         fd.dets.push_back(d);
         ++det_lines;
     }
@@ -168,14 +177,19 @@ int main(int argc, char** argv) {
     bool prev_e = false;
     long long e_run_frames = 0;
     uint64_t e_run_start_frame = 0;
+    uint64_t e_run_start_t = 0;
     bool has_e_release = false;
     int64_t last_e_release_t = 0;
+    bool seen_idle_since_release = false;   // 本次 release后是否进过 IDLE（I5 豁免）
+    long long exempt_i5 = 0;
 
     long long replayed = 0;
+    uint64_t last_frame_t = 0;
     for (const auto& kv : frames) {
         const uint64_t frame_idx = kv.first;
         const FrameData& fd = kv.second;
         const uint64_t now_ms = fd.t;
+        last_frame_t = now_ms;
 
         core_detections dets{};
         dets.count = 0;
@@ -229,29 +243,46 @@ int main(int argc, char** argv) {
             if (!ok) ++viol[5];
         }
 
+        // I5 豁免依据：上一次 E release之后出现过 IDLE（攻击/恢复被目标丢失打断）
+        if (has_e_release && dbg.state == 0) seen_idle_since_release = true;
+
         // I4/I5: desired_e 连续段跟踪
         if (dbg.desired_e) {
-            if (!prev_e) e_run_start_frame = frame_idx;
+            if (!prev_e) {
+                e_run_start_frame = frame_idx;
+                e_run_start_t = now_ms;
+            }
             ++e_run_frames;
-            if (!prev_e && has_e_release) {
-                const int64_t gap = static_cast<int64_t>(now_ms) - last_e_release_t;
-                if (gap < kMinEGapMs) {
-                    ++viol[4];
-                    std::printf("[I5] 违例 frame=%llu: 距上次E释放 %lldms < 800ms\n",
-                                (unsigned long long)frame_idx, (long long)gap);
+            if (!prev_e) {
+                if (has_e_release) {
+                    const int64_t gap = static_cast<int64_t>(now_ms) - last_e_release_t;
+                    if (gap < kMinEGapMs) {
+                        if (seen_idle_since_release) {
+                            // 两次 E 之间进过 IDLE：RECOVERY 已被打断，800ms 不适用
+                            ++exempt_i5;
+                        } else {
+                            ++viol[4];
+                            std::printf("[I5] 违例 frame=%llu: 距上次E释放 %lldms < 800ms\n",
+                                        (unsigned long long)frame_idx, (long long)gap);
+                        }
+                    }
                 }
+                seen_idle_since_release = false;
             }
         } else if (prev_e) {
-            const long long ms = e_run_frames * kFrameMs;
-            if (ms < kMinEHoldMs || ms > kMaxEHoldMs) {
+            // 用录制时间戳量真实按住时长：帧距在 31~47ms 抖动，
+            // 帧数×33 会把 100~131ms 的按压少算成 99ms
+            const long long ms = static_cast<long long>(now_ms - e_run_start_t);
+            if (ms < kMinEHoldMs || ms > kMaxEHoldMs + kMaxEHoldSlackMs) {
                 ++viol[3];
-                std::printf("[I4] 违例 frame=%llu..%llu: E连续 %lld帧 = %lldms 超出[100,500]\n",
+                std::printf("[I4] 违例 frame=%llu..%llu: E持续 %lldms (%lld帧) 超出[100,2000]\n",
                             (unsigned long long)e_run_start_frame,
                             (unsigned long long)frame_idx,
-                            (long long)e_run_frames, (long long)ms);
+                            (long long)ms, (long long)e_run_frames);
             }
             has_e_release = true;
             last_e_release_t = static_cast<int64_t>(now_ms);
+            seen_idle_since_release = (dbg.state == 0);
             e_run_frames = 0;
         }
 
@@ -291,12 +322,12 @@ int main(int argc, char** argv) {
 
     if (e_run_frames > 0) {
         // 数据在 E 按住中结束：只可能确定"过长"，"过短"是截断导致的假象
-        const long long ms = e_run_frames * kFrameMs;
-        if (ms > kMaxEHoldMs) {
+        const long long ms = static_cast<long long>(last_frame_t - e_run_start_t);
+        if (ms > kMaxEHoldMs + kMaxEHoldSlackMs) {
             ++viol[3];
-            std::printf("[I4] 违例 frame=%llu..(数据结束): E连续 %lld帧 = %lldms 超出[100,500]\n",
+            std::printf("[I4] 违例 frame=%llu..(数据结束): E持续 %lldms (%lld帧) 超出[100,2000]\n",
                         (unsigned long long)e_run_start_frame,
-                        (long long)e_run_frames, (long long)ms);
+                        (long long)ms, (long long)e_run_frames);
         }
     }
 
@@ -317,6 +348,9 @@ int main(int argc, char** argv) {
         } else {
             std::printf("  I%d: FAIL (%lld 次违例) %s\n", i + 1, viol[i], InvariantName(i));
         }
+    }
+    if (exempt_i5 > 0) {
+        std::printf("  I5 豁免: %lld 次（两次E之间进入过 IDLE，RECOVERY 被丢失打断）\n", exempt_i5);
     }
     std::printf("总体: %s\n", all_pass ? "PASS" : "FAIL");
     std::fflush(stdout);
