@@ -25,8 +25,8 @@ core_contract.h 是项目唯一契约。任何对 ABI、结构体、错误码、
 2. 修改 core_contract.h。
 3. 更新 tests/test_contract_c.c 和 tests/test_contract_cpp.cpp 中受影响的编译期断言。
 4. 重跑阶段 0：C11 与 C++17 两个编译必须同时通过。
-5. 重跑阶段 1：BUILD_STAGE2_PLUGINS=OFF 下 run_acceptance.ps1 -Stage stage1 必须 13/13 PASS。
-6. 重跑阶段 2：BUILD_STAGE2_PLUGINS=ON 下 run_acceptance.ps1 -Stage stage2 必须 6/6 PASS，正常 plugins 输出 5 帧且退出 0。
+5. 重跑阶段 1：BUILD_STAGE2_PLUGINS=OFF 下 run_acceptance.ps1 -Stage stage1 必须 11/11 PASS。
+6. 重跑阶段 2：BUILD_STAGE2_PLUGINS=ON 下 run_acceptance.ps1 -Stage stage2 必须 5/5 PASS，正常 plugins 输出 5 帧且退出 0。
 7. 所有验证通过后再 commit，commit message 必须以 "contract:" 开头。
 
 ## 四、禁止事项
