@@ -192,9 +192,12 @@ bad_plugins 里 abi_mismatch_capture 的 ABI 段要改成 "3"，保持不匹配�
    详见 `docs/stage4.md` 第十三节。
 5. **ABI 从 2 继续升到 3 和 4**（`docs/stage5.md`、`docs/stage6.md` 各一次契约变更）。
 
+### 已验证（补充）
+
+- **capture 长稳**：20000 帧（1920×1080@30，约 11 分钟）连续拉帧，内存稳定在 552–553 MB，无增长、无错误、无崩溃。测试脚本 `scripts/run_capture_soak.ps1`（不纳入 `run_all.ps1`，需真实采集卡）。
+
 ### 已知未验证项
 
-- capture 长时间运行（>10 分钟）的内存与帧率稳定性
 - 串口高频发送（>30 次/秒）时是否丢包（由 `OutputManager` 承担）
 - 采集卡被其他程序占用时的错误恢复
 - YOLO 推理与 Python 项目在同帧同输入下的一致性（对比置信度、坐标、类别）
