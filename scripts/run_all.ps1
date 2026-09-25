@@ -106,7 +106,7 @@ function Test-CoreRun {
     if (-not (Test-Path -LiteralPath $coreExe)) {
         return @{ Ok = $false; ExitCode = -1; Output = ("core not found: {0}" -f $coreExe); Command = $coreExe }
     }
-    $args = ('--plugins-dir "{0}"' -f $PluginsDir)
+    $args = ('--plugins-dir "{0}" --input-port none' -f $PluginsDir)
     $result = Invoke-External -FilePath $coreExe -ArgumentList $args
     $ok = $true
     if ($RequireExitZero -and $result.ExitCode -ne 0) { $ok = $false }
