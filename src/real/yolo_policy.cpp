@@ -22,6 +22,11 @@ static std::string g_input_name;
 static std::string g_output_name;
 static uint64_t g_last_input_hash = 0;
 static int g_verbose = 0;
+static int g_input_size = 640;
+static float g_conf_thr = 0.7f;
+static float g_iou_thr = 0.45f;
+static int g_num_classes = 2;
+static int g_use_dml = 1;
 
 static std::wstring ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -438,7 +443,7 @@ static void PostprocessDetections(
         if (d.cx < 0 || d.cx > 1 || d.cy < 0 || d.cy > 1) continue;
 
         // w 和 h 都 < 20/640 才丢弃（原 30/640，放宽 1.5 倍）
-        const float min_px = 20.0f / 640.0f;
+        const float min_px = 20.0f / static_cast<float>(g_input_size);
         if (d.w < min_px && d.h < min_px) continue;
 
         candidates.push_back(d);
@@ -462,7 +467,7 @@ static void PostprocessDetections(
 }
 
 static void InferenceLoop() {
-    static constexpr uint32_t kInputSize = 640;
+    const uint32_t kInputSize = static_cast<uint32_t>(g_input_size);
     uint64_t last_seq = 0;
     std::vector<uint8_t> local_bgra;
 
@@ -560,10 +565,10 @@ static void InferenceLoop() {
             if (out_shape.size() == 3 && out_shape[2] > 0) {
                 PostprocessDetections(
                     out_data,
-                    2,
+                    static_cast<size_t>(g_num_classes),
                     static_cast<size_t>(out_shape[2]),
-                    0.7f,
-                    0.45f,
+                    g_conf_thr,
+                    g_iou_thr,
                     scale, dw, dh,
                     f.width, f.height,
                     detections);
@@ -610,15 +615,52 @@ core_error plugin_init(uint32_t host_abi, const char* config) {
         if (v > 0) g_infer_fps = v;
     }
 
+    const std::string input_size_str = GetConfigValue(config, "policy_input_size");
+    if (!input_size_str.empty()) {
+        const int v = std::atoi(input_size_str.c_str());
+        if (v > 0) g_input_size = v;
+    }
+
+    const std::string conf_str = GetConfigValue(config, "policy_conf");
+    if (!conf_str.empty()) {
+        const float v = static_cast<float>(std::atof(conf_str.c_str()));
+        if (v > 0.0f && v <= 1.0f) g_conf_thr = v;
+    }
+
+    const std::string iou_str = GetConfigValue(config, "policy_iou");
+    if (!iou_str.empty()) {
+        const float v = static_cast<float>(std::atof(iou_str.c_str()));
+        if (v > 0.0f && v <= 1.0f) g_iou_thr = v;
+    }
+
+    const std::string gpu_str = GetConfigValue(config, "policy_gpu");
+    if (!gpu_str.empty()) {
+        const int v = std::atoi(gpu_str.c_str());
+        g_use_dml = (v != 0) ? 1 : 0;
+    }
+
+    const std::string labels_str = GetConfigValue(config, "policy_labels");
+    if (!labels_str.empty()) {
+        int count = 1;
+        for (char ch : labels_str) {
+            if (ch == ',') ++count;
+        }
+        if (count > 0) g_num_classes = count;
+    }
+
     if (g_env == nullptr) {
         g_env = new Ort::Env(nullptr, ORT_LOGGING_LEVEL_WARNING, "yolo_policy");
     }
 
     Ort::SessionOptions options;
-    OrtStatus* dml_status = OrtSessionOptionsAppendExecutionProvider_DML(options, 0);
-    if (dml_status != nullptr) {
-        Ort::Status st(dml_status);
-        fprintf(stderr, "[yolo] DirectML 不可用，回退 CPU: %s\n", st.GetErrorMessage().c_str());
+    if (g_use_dml) {
+        OrtStatus* dml_status = OrtSessionOptionsAppendExecutionProvider_DML(options, 0);
+        if (dml_status != nullptr) {
+            Ort::Status st(dml_status);
+            fprintf(stderr, "[yolo] DirectML 不可用，回退 CPU: %s\n", st.GetErrorMessage().c_str());
+        }
+    } else {
+        fprintf(stderr, "[yolo] 按配置使用 CPU 推理\n");
     }
 
     try {
@@ -676,6 +718,9 @@ core_error plugin_init(uint32_t host_abi, const char* config) {
             allocator.Free(name);
         }
     }
+
+    fprintf(stderr, "[yolo] 参数: input_size=%d conf=%.2f iou=%.2f gpu=%d classes=%d fps=%d\n",
+            g_input_size, g_conf_thr, g_iou_thr, g_use_dml, g_num_classes, g_infer_fps);
 
     g_infer_stop = false;
     if (g_infer_thread.joinable()) {
