@@ -303,6 +303,7 @@ struct CppScript::Impl {
     int active_key = 0;
     int last_pressed = 0;
     bool desired_e = false;
+    bool last_desired_e = false;
 
     static int CountInBand(const ScriptWorld& world,
                            float me_fx, float me_fy, const Impl* impl) {
@@ -818,9 +819,8 @@ void CppScript::GetDecision(core_decision* out) {
     }
 
     // E键差分（简化：仅根据 desired_e 和 e_pressed 状态）
-    static bool last_desired_e = false;
-    if (impl_->desired_e != last_desired_e) {
-        if (last_desired_e && out->out_count < CORE_DECISION_CAPACITY) {
+    if (impl_->desired_e != impl_->last_desired_e) {
+        if (impl_->last_desired_e && out->out_count < CORE_DECISION_CAPACITY) {
             out->actions[out->out_count].kind = CORE_ACTION_KEY;
             out->actions[out->out_count].a = 0x45;
             out->actions[out->out_count].b = 0;
@@ -834,7 +834,7 @@ void CppScript::GetDecision(core_decision* out) {
             out->actions[out->out_count].c = 0;
             out->out_count++;
         }
-        last_desired_e = impl_->desired_e;
+        impl_->last_desired_e = impl_->desired_e;
     }
 } // End of GetDecision
 
