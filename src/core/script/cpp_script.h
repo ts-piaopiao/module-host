@@ -26,6 +26,8 @@ public:
     // 调试接口：返回内部状态。仅供回放工具使用。
     void GetDebugInfo(CppScriptDebugInfo* out) const;
 
+    bool GetMeLock(float* fx, float* fy) const override;
+
 private:
     struct Impl;
     Impl* impl_;

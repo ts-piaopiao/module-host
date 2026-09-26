@@ -20,4 +20,6 @@ public:
     virtual void OnFrame(const ScriptWorld& world) = 0;
     virtual void GetDecision(core_decision* out) = 0;
     virtual void Shutdown() = 0;
+    // 返回脚本内部锁定的 me 位置。若未锁定，返回 false。
+    virtual bool GetMeLock(float* fx, float* fy) const { return false; }
 };

@@ -823,3 +823,10 @@ void CppScript::GetDebugInfo(CppScriptDebugInfo* out) const {
     out->active_key = impl_->active_key;
     out->desired_e = impl_->desired_e;
 }
+
+bool CppScript::GetMeLock(float* fx, float* fy) const {
+    if (!impl_->me.valid) return false;
+    if (fx) *fx = impl_->me.fx;
+    if (fy) *fy = impl_->me.fy;
+    return true;
+}

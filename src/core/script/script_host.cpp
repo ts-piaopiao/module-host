@@ -43,7 +43,6 @@ void ScriptHost::GetDecision(core_decision* out) {
 }
 
 bool ScriptHost::GetMeLock(float* fx, float* fy) const {
-    // S1 空脚本无锁，返回 false
-    (void)fx; (void)fy;
-    return false;
+    if (!impl_->script) return false;
+    return impl_->script->GetMeLock(fx, fy);
 }
