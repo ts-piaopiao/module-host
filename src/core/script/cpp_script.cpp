@@ -316,13 +316,6 @@ struct CppScript::Impl {
     MeLockState me;
     TargetLockState target;
 
-    // EMA 平滑（α=0.7）：减弱 YOLO 检测抖对下游判定的影响
-    float smooth_me_fx = 0.0f;
-    float smooth_me_fy = 0.0f;
-    float smooth_target_cx = 0.0f;
-    float smooth_target_cy = 0.0f;
-    bool smooth_init = false;
-
     uint64_t attack_start_ms = 0;
     uint64_t recovery_start_ms = 0;
     uint64_t last_attack_release_ms = 0;   // 上次 E 释放时刻；用于独立技能冷却检查
@@ -495,31 +488,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     }
 
     const uint64_t now = world.now_ms;
-
-    // EMA 平滑：写回 me.fx/fy、target.cx/cy，下游判定自动使用平滑值。
-    // 注意不动 lock_fx/lock_fy/lock_cx/lock_cy——那些是匹配状态，需要原始值。
-    if (impl_->me.valid && impl_->target.has) {
-        if (!impl_->smooth_init) {
-            impl_->smooth_me_fx = impl_->me.fx;
-            impl_->smooth_me_fy = impl_->me.fy;
-            impl_->smooth_target_cx = impl_->target.cx;
-            impl_->smooth_target_cy = impl_->target.cy;
-            impl_->smooth_init = true;
-        } else {
-            constexpr float kAlpha = 0.7f;
-            constexpr float kOneMinusAlpha = 0.3f;
-            impl_->smooth_me_fx     = kAlpha * impl_->smooth_me_fx     + kOneMinusAlpha * impl_->me.fx;
-            impl_->smooth_me_fy     = kAlpha * impl_->smooth_me_fy     + kOneMinusAlpha * impl_->me.fy;
-            impl_->smooth_target_cx = kAlpha * impl_->smooth_target_cx + kOneMinusAlpha * impl_->target.cx;
-            impl_->smooth_target_cy = kAlpha * impl_->smooth_target_cy + kOneMinusAlpha * impl_->target.cy;
-        }
-        impl_->me.fx = impl_->smooth_me_fx;
-        impl_->me.fy = impl_->smooth_me_fy;
-        impl_->target.cx = impl_->smooth_target_cx;
-        impl_->target.cy = impl_->smooth_target_cy;
-    } else {
-        impl_->smooth_init = false;
-    }
 
     if (!impl_->me.valid || !impl_->target.has) {
         if (impl_->state != Impl::State::IDLE) {
