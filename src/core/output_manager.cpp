@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 
 namespace {
 
@@ -220,6 +221,29 @@ bool TranslateAndSend(HANDLE h, const core_action& a, bool mock) {
     return SendCommand(h, cmd);
 }
 
+// 用 CreateWaitableTimerEx 实现亚毫秒精度等待。
+// 相比 Sleep(1)（实际精度 ~15ms），此方案不受系统时钟分辨率限制。
+// 无全局副作用（不使用 timeBeginPeriod）。
+bool WaitPreciseUs(HANDLE h_timer, uint64_t us) {
+    if (h_timer == nullptr) {
+        // 降级：无高精度 timer 时用 Sleep
+        if (us >= 1000) {
+            Sleep(static_cast<DWORD>(us / 1000));
+        } else if (us > 0) {
+            Sleep(0);  // 让出 CPU
+        }
+        return true;
+    }
+    LARGE_INTEGER due;
+    // 负值 = 相对时间；单位 100ns；1us = 10 * 100ns
+    due.QuadPart = -static_cast<LONGLONG>(us) * 10LL;
+    if (!SetWaitableTimer(h_timer, &due, 0, nullptr, nullptr, FALSE)) {
+        return false;
+    }
+    WaitForSingleObject(h_timer, INFINITE);
+    return true;
+}
+
 }  // namespace
 
 struct QueuedAction {
@@ -247,6 +271,8 @@ struct OutputManager::Impl {
     std::thread worker;
 
     int consecutive_failures = 0;
+    HANDLE h_timer = nullptr;
+    std::mt19937 rng;
     Recorder* send_sink = nullptr;
     uint64_t script_batch_counter = 0;
     uint64_t last_sent_script_batch_id = 0;
@@ -277,6 +303,18 @@ bool OutputManager::Start(const std::string& config) {
         }
     }
 
+    // 尝试创建高精度定时器。失败不阻塞（降级为 Sleep）。
+    impl_->h_timer = CreateWaitableTimerExW(
+        nullptr, nullptr,
+        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+        TIMER_ALL_ACCESS);
+    if (impl_->h_timer == nullptr) {
+        std::fprintf(stderr, "[output] CreateWaitableTimerEx 失败，降级为 Sleep 精度\n");
+    }
+
+    // 初始化 mt19937 随机源
+    impl_->rng.seed(static_cast<uint32_t>(GetTickCount64()));
+
     impl_->started = true;
     impl_->stop_flag = false;
     impl_->worker = std::thread([this]() {
@@ -299,8 +337,13 @@ bool OutputManager::Start(const std::string& config) {
             // 同批动作保持零延迟，保护游戏方向切换（release + press 不可被拉开）。
             // batch_id == 0 的动作（SendAsync / SetScriptPaused 的即时释放）不延迟。
             if (item.batch_id != 0 && item.batch_id != impl_->last_sent_script_batch_id) {
-                const int delay = std::rand() % 34;
-                if (delay > 0) Sleep(static_cast<DWORD>(delay));
+                // 高精度抖动：0~33000 微秒（即 0~33ms）均匀分布。
+                // 用 mt19937 而非 rand() —— 质量更好，且为后续切换分布（L3 真人分布）预留。
+                std::uniform_int_distribution<uint32_t> dist(0, 33000);
+                const uint32_t delay_us = dist(impl_->rng);
+                if (delay_us > 0) {
+                    WaitPreciseUs(impl_->h_timer, delay_us);
+                }
                 impl_->last_sent_script_batch_id = item.batch_id;
             }
 
@@ -349,6 +392,10 @@ void OutputManager::Stop() {
     if (impl_->port != INVALID_HANDLE_VALUE) {
         CloseHandle(impl_->port);
         impl_->port = INVALID_HANDLE_VALUE;
+    }
+    if (impl_->h_timer != nullptr) {
+        CloseHandle(impl_->h_timer);
+        impl_->h_timer = nullptr;
     }
     impl_->started = false;
 }
