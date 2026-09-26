@@ -676,7 +676,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 
         case Impl::State::CHASE: {
             const float abs_dx = std::fabs(dx_target);
-            const bool need_move = (abs_dx >= 0.02f);
+            // 滞回：正在走用宽松阈值（0.015），停止中用严格阈值（0.030）
+            // ——避免 dx_target 在 0.02 附近抖动时反复启停
+            const bool need_move = (impl_->active_dir_key != 0)
+                ? (abs_dx >= 0.015f)
+                : (abs_dx >= 0.030f);
             const int want_dir = need_move ? ((dx_target > 0) ? 0x27 : 0x25) : 0;
             desired_dir = want_dir;
             desired_e = false;
@@ -716,9 +720,10 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         if (want_change) {
             const bool held_long_enough =
                 (now - impl_->dir_press_start_ms) >= impl_->dir_min_hold_ms;
+            // 明确反向才触发（±0.02 阈值），避免 dx_target 在 0 附近抖动
             const bool target_behind =
-                (impl_->facing > 0 && dx_target < 0) ||
-                (impl_->facing < 0 && dx_target > 0);
+                (impl_->facing > 0 && dx_target < -0.02f) ||
+                (impl_->facing < 0 && dx_target >  0.02f);
             if (!held_long_enough && !target_behind) {
                 desired_dir = impl_->active_dir_key;
             }
