@@ -1,5 +1,7 @@
 #include "output_manager.h"
 
+#include "recorder.h"
+
 #include <windows.h>
 
 #include <string>
@@ -220,6 +222,12 @@ bool TranslateAndSend(HANDLE h, const core_action& a, bool mock) {
 
 }  // namespace
 
+struct QueuedAction {
+    core_action act;
+    uint64_t source;      // 0=script 1=remote 2=pause
+    uint64_t batch_id;   // 0 = 立即发送（SendAsync / SetScriptPaused）；>=1 = 脚本批号
+};
+
 struct OutputManager::Impl {
     HANDLE port = INVALID_HANDLE_VALUE;
     std::string port_name;
@@ -228,7 +236,7 @@ struct OutputManager::Impl {
 
     std::mutex mutex;
     std::condition_variable cv;
-    std::deque<core_action> queue;
+    std::deque<QueuedAction> queue;
     bool stop_flag = false;
     bool started = false;
     bool script_paused = false;
@@ -238,6 +246,9 @@ struct OutputManager::Impl {
     std::thread worker;
 
     int consecutive_failures = 0;
+    Recorder* send_sink = nullptr;
+    uint64_t script_batch_counter = 0;
+    uint64_t last_sent_script_batch_id = 0;
 };
 
 OutputManager::OutputManager() : impl_(new Impl()) {}
@@ -269,7 +280,8 @@ bool OutputManager::Start(const std::string& config) {
     impl_->stop_flag = false;
     impl_->worker = std::thread([this]() {
         while (true) {
-            core_action a;
+            QueuedAction item;
+            Recorder* sink = nullptr;
             {
                 std::unique_lock<std::mutex> lk(impl_->mutex);
                 impl_->cv.wait(lk, [this]() {
@@ -277,11 +289,25 @@ bool OutputManager::Start(const std::string& config) {
                 });
                 if (impl_->stop_flag && impl_->queue.empty()) break;
                 if (impl_->queue.empty()) continue;
-                a = impl_->queue.front();
+                item = impl_->queue.front();
                 impl_->queue.pop_front();
+                sink = impl_->send_sink;
             }
 
-            bool ok = TranslateAndSend(impl_->port, a, impl_->mock_mode);
+            // 跨批抖动：脚本新批的首个动作前随机延迟 0-33ms。
+            // 同批动作保持零延迟，保护游戏方向切换（release + press 不可被拉开）。
+            // batch_id == 0 的动作（SendAsync / SetScriptPaused 的即时释放）不延迟。
+            if (item.batch_id != 0 && item.batch_id != impl_->last_sent_script_batch_id) {
+                const int delay = std::rand() % 34;
+                if (delay > 0) Sleep(static_cast<DWORD>(delay));
+                impl_->last_sent_script_batch_id = item.batch_id;
+            }
+
+            if (sink != nullptr) {
+                sink->RecordSend(item.source, item.act);
+            }
+
+            bool ok = TranslateAndSend(impl_->port, item.act, impl_->mock_mode);
             if (!ok) {
                 impl_->consecutive_failures++;
                 std::fprintf(stderr, "[output] 写串口失败, 连续 %d 次\n", impl_->consecutive_failures);
@@ -296,6 +322,7 @@ bool OutputManager::Start(const std::string& config) {
                             std::lock_guard<std::mutex> lk2(impl_->mutex);
                             impl_->queue.clear();
                             impl_->consecutive_failures = 0;
+                            impl_->last_sent_script_batch_id = 0;
                         }
                     }
                 }
@@ -333,9 +360,14 @@ void OutputManager::SendScript(const core_decision* decision) {
     if (decision == nullptr || decision->out_count > CORE_DECISION_CAPACITY) {
         return;
     }
+    const uint64_t batch = ++impl_->script_batch_counter;
     for (uint32_t i = 0; i < decision->out_count; ++i) {
         const core_action& act = decision->actions[i];
-        impl_->queue.push_back(act);
+        QueuedAction qa;
+        qa.act = act;
+        qa.source = 0;
+        qa.batch_id = batch;
+        impl_->queue.push_back(qa);
         if (act.kind == CORE_ACTION_KEY) {
             if (act.b == 1) {
                 impl_->script_pressed_keys.insert(act.a);
@@ -352,7 +384,11 @@ void OutputManager::SendAsync(const core_action* action) {
     if (!impl_->started || action == nullptr) {
         return;
     }
-    impl_->queue.push_back(*action);
+    QueuedAction qa;
+    qa.act = *action;
+    qa.source = 1;
+    qa.batch_id = 0;
+    impl_->queue.push_back(qa);
     impl_->cv.notify_one();
 }
 
@@ -363,16 +399,23 @@ void OutputManager::SetScriptPaused(bool paused) {
     impl_->script_paused = paused;
     if (paused) {
         for (int vk : impl_->script_pressed_keys) {
-            core_action a;
-            a.kind = CORE_ACTION_KEY;
-            a.a = vk;
-            a.b = 0;
-            a.c = 0;
-            impl_->queue.push_back(a);
+            QueuedAction qa;
+            qa.act.kind = CORE_ACTION_KEY;
+            qa.act.a = vk;
+            qa.act.b = 0;
+            qa.act.c = 0;
+            qa.source = 2;
+            qa.batch_id = 0;
+            impl_->queue.push_back(qa);
         }
         impl_->script_pressed_keys.clear();
         impl_->cv.notify_one();
     }
+}
+
+void OutputManager::SetSendSink(Recorder* recorder) {
+    std::lock_guard<std::mutex> lk(impl_->mutex);
+    impl_->send_sink = recorder;
 }
 
 bool OutputManager::IsScriptPaused() const {

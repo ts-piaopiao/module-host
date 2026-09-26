@@ -4,6 +4,8 @@
 #include "core_contract.h"
 #include <string>
 
+class Recorder;
+
 class OutputManager {
 public:
     OutputManager();
@@ -18,6 +20,10 @@ public:
 
     // 停止并关闭串口。幂等。
     void Stop();
+
+    // 设置发送日志接收器。非空时，每个动作在发出前调 recorder->RecordSend。
+    // 传 nullptr 表示不记录。可在 Start 前或后调用。
+    void SetSendSink(Recorder* recorder);
 
     // 脚本入口：帧同步调用。内部检查 script_paused：
     //   - 若暂停：直接丢弃 decision 里所有 action
