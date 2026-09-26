@@ -31,6 +31,10 @@ const char* KeyName(int32_t vk) {
     }
 }
 
+bool IsDirectionKey(int32_t vk) {
+    return vk == 0x25 || vk == 0x26 || vk == 0x27 || vk == 0x28;
+}
+
 void PrintPercentiles(const char* label, std::vector<uint64_t> samples) {
     if (samples.empty()) {
         std::printf("  %s: (none)\n", label);
@@ -167,6 +171,52 @@ int main(int argc, char** argv) {
     }
 
     PrintPercentiles("inter-event", inter_event_us);
+
+    // === 分析 1：方向键 release → 下一个 E press ===
+    // 对应脚本：CHASE → ATTACK 的攻击反应延迟
+    std::vector<uint64_t> dir_release_to_e_press_us;
+    {
+        uint64_t last_dir_release_us = 0;
+        for (const auto& e : events) {
+            if (e.down == 0 && IsDirectionKey(e.vk)) {
+                last_dir_release_us = e.t_us;
+            } else if (e.down == 1 && e.vk == 0x45) {
+                if (last_dir_release_us != 0 && e.t_us > last_dir_release_us) {
+                    const uint64_t dt = e.t_us - last_dir_release_us;
+                    if (dt <= 5000000ULL) {  // 上限 5 秒，超过视为"不相关"
+                        dir_release_to_e_press_us.push_back(dt);
+                    }
+                }
+                last_dir_release_us = 0;  // 用完清零，避免一次 release 匹配多个 E
+            }
+        }
+    }
+    PrintPercentiles("dir_release -> E_press", dir_release_to_e_press_us);
+    PrintHistogramUs("dir_release -> E_press histogram",
+                     dir_release_to_e_press_us, 10000, 1000000, 60);
+
+    // === 分析 2：E release → 下一个方向键 press ===
+    // 对应脚本：RECOVERY → CHASE 的恢复延迟
+    std::vector<uint64_t> e_release_to_dir_press_us;
+    {
+        uint64_t last_e_release_us = 0;
+        for (const auto& e : events) {
+            if (e.down == 0 && e.vk == 0x45) {
+                last_e_release_us = e.t_us;
+            } else if (e.down == 1 && IsDirectionKey(e.vk)) {
+                if (last_e_release_us != 0 && e.t_us > last_e_release_us) {
+                    const uint64_t dt = e.t_us - last_e_release_us;
+                    if (dt <= 5000000ULL) {
+                        e_release_to_dir_press_us.push_back(dt);
+                    }
+                }
+                last_e_release_us = 0;
+            }
+        }
+    }
+    PrintPercentiles("E_release -> dir_press", e_release_to_dir_press_us);
+    PrintHistogramUs("E_release -> dir_press histogram",
+                     e_release_to_dir_press_us, 10000, 1000000, 60);
 
     // 直方图：E 键 hold，方向键 hold，所有事件间隔
     for (auto& kv : hold_us) {
