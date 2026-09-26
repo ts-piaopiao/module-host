@@ -62,6 +62,21 @@ bool CreateDirRecursive(const std::string& path) {
     return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// 高精度时间戳：微秒级，基于硬件计数器。
+// 用于替代 GetTickCount64()——后者在未调 timeBeginPeriod 时分辨率仅 15.6ms。
+uint64_t NowMicros() {
+    static LARGE_INTEGER freq = []() {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    // 转微秒，避免溢出：now * 1e6 / freq
+    return static_cast<uint64_t>(
+        (static_cast<double>(now.QuadPart) * 1e6) / static_cast<double>(freq.QuadPart));
+}
+
 std::string ParentDir(const std::string& path) {
     size_t pos = path.find_last_of("\\/");
     if (pos == std::string::npos) return {};
@@ -250,7 +265,7 @@ void Recorder::Stop() {
 
 void Recorder::RecordDetection(uint64_t frame, const core_detection& d) {
     json j;
-    j["t"] = GetTickCount64();
+    j["t"] = NowMicros();
     j["type"] = "det";
     j["frame"] = frame;
     j["cls"] = d.cls;
@@ -267,7 +282,7 @@ void Recorder::RecordDecision(uint64_t frame, bool me_valid,
                               float me_fx, float me_fy,
                               const core_decision* dec) {
     json j;
-    j["t"] = GetTickCount64();
+    j["t"] = NowMicros();
     j["type"] = "dec";
     j["frame"] = frame;
     j["me_valid"] = me_valid ? 1 : 0;
@@ -290,7 +305,7 @@ void Recorder::RecordDecision(uint64_t frame, bool me_valid,
 
 void Recorder::RecordHuman(uint64_t frame, const core_action& a) {
     json j;
-    j["t"] = GetTickCount64();
+    j["t"] = NowMicros();
     j["type"] = "hum";
     j["frame"] = frame;
     j["kind"] = a.kind;
@@ -302,7 +317,7 @@ void Recorder::RecordHuman(uint64_t frame, const core_action& a) {
 
 void Recorder::RecordSend(uint64_t src, const core_action& a) {
     json j;
-    j["t"] = GetTickCount64();
+    j["t"] = NowMicros();
     j["type"] = "snd";
     j["src"] = src;
     j["kind"] = a.kind;
@@ -314,7 +329,7 @@ void Recorder::RecordSend(uint64_t src, const core_action& a) {
 
 void Recorder::RecordError(const char* msg) {
     json j;
-    j["t"] = GetTickCount64();
+    j["t"] = NowMicros();
     j["type"] = "err";
     j["level"] = "ERR";
     j["msg"] = msg != nullptr ? msg : "";
