@@ -136,6 +136,30 @@ int main(int argc, char** argv) {
                     "concentrated>>32), max/min=%llu/%llu (ideal≈%.0f)\n",
                     chi2, (unsigned long long)mx, (unsigned long long)mn,
                     expected);
+
+        // 多个模值检查——暴露"低精度 Sleep 导致的档位集中"
+        const int mods[] = { 5, 7, 15 };
+        for (int m : mods) {
+            std::vector<uint64_t> bins(m, 0);
+            for (auto v : ts) bins[v % m]++;
+            char title[64];
+            std::snprintf(title, sizeof(title), "mod %d histogram", m);
+            PrintHistogram(title, bins, ts.size(), 60);
+            const double exp2 = static_cast<double>(ts.size()) / m;
+            double c2 = 0.0;
+            uint64_t bmax = 0, bmin = ts.size();
+            for (auto v : bins) {
+                const double d = static_cast<double>(v) - exp2;
+                c2 += d * d / exp2;
+                if (v > bmax) bmax = v;
+                if (v < bmin) bmin = v;
+            }
+            std::printf("mod-%d uniformity: chi2=%.1f (df=%d, uniform≈%d, "
+                        "concentrated>>%d), max/min=%llu/%llu (ideal≈%.1f)\n",
+                        m, c2, m - 1, m - 1, m - 1,
+                        (unsigned long long)bmax, (unsigned long long)bmin,
+                        exp2);
+        }
     }
 
     return 0;
