@@ -20,9 +20,8 @@ constexpr float kTargetMatchY = 0.037f;
 constexpr uint64_t kTargetLoseMs = 500;
 constexpr float kSamePlatY = 0.028f;
 constexpr float kBandXMin = 0.010f;
-// 冰冻术 300px 攻击范围（角色中心到怪物中心），归一化 = 300/1920 = 0.156。
-// 留 12px 容错 → 288/1920 = 0.150
-constexpr float kBandXMaxSame = 0.150f;
+// 冰冻术硬范围 300px，缩 20px 留容错 → 280px，归一化 280/1920 = 0.1458
+constexpr float kBandXMaxSame = 0.1458f;
 constexpr float kBandXMaxCross = 0.104f;
 constexpr float kBandYMin = -0.074f;
 constexpr float kBandYMax = 0.019f;
@@ -212,37 +211,58 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
 
 bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
     if (!t.has || !me.valid) return false;
-    // X 轴：怪物 bbox 与攻击区 [me.fx, me.fx ± x_max] 相交
+    // 攻击区：椭圆扇段（X 前方 19px~300px 死角+弧线；Y 上方 80px / 下方 10px）
     const float t_left = t.cx - t.w * 0.5f;
     const float t_right = t.cx + t.w * 0.5f;
-    const float x_max = (std::fabs(t.fy - me.fy) < kSamePlatY) ? kBandXMaxSame
-                                                                : kBandXMaxCross;
-    const float zone_far = (facing > 0) ? (me.fx + x_max) : (me.fx - x_max);
-    const float zone_lo = (zone_far < me.fx) ? zone_far : me.fx;
-    const float zone_hi = (zone_far < me.fx) ? me.fx : zone_far;
-    if (t_right < zone_lo || t_left > zone_hi) return false;
+    float x_near, x_far;
+    if (facing > 0) {
+        x_near = t_left - me.fx;
+        x_far  = t_right - me.fx;
+    } else {
+        x_near = me.fx - t_right;
+        x_far  = me.fx - t_left;
+    }
+    if (x_far < kBandXMin) return false;
+    if (x_near > kBandXMaxSame) return false;
 
-    // Y 轴：怪物 bbox 与攻击纵向范围相交
+    // Y 轴：怪物 bbox 与 [me.fy + kBandYMin, me.fy + kBandYMax] 相交
     const float t_top = t.cy - t.h * 0.5f;
     const float t_bot = t.cy + t.h * 0.5f;
     const float band_top = me.fy + kBandYMin;
     const float band_bot = me.fy + kBandYMax;
     if (t_bot < band_top || t_top > band_bot) return false;
 
+    // 椭圆约束：X 最远随 Y 高度衰减
+    // 用 bbox 与 band 相交区间的中点作为"代表高度"
+    const float y_clip_top = (t_top > band_top) ? t_top : band_top;
+    const float y_clip_bot = (t_bot < band_bot) ? t_bot : band_bot;
+    const float y_rep = (y_clip_top + y_clip_bot) * 0.5f - me.fy;
+    const float y_half = (y_rep < 0.0f) ? (-kBandYMin) : kBandYMax;
+    if (y_half <= 0.0f) return false;
+    const float ny = y_rep / y_half;
+    const float scale = 1.0f - ny * ny;
+    if (scale <= 0.0f) return false;
+    const float x_max_at_y = kBandXMaxSame * std::sqrt(scale);
+
+    if (x_far < kBandXMin) return false;
+    if (x_near > x_max_at_y) return false;
     return true;
 }
 
 bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
               float t_h, float t_w, int facing) {
-    const float t_fy = t_cy + t_h * 0.5f;
     const float t_left = t_cx - t_w * 0.5f;
     const float t_right = t_cx + t_w * 0.5f;
-    const float x_max = (std::fabs(t_fy - me_fy) < kSamePlatY) ? kBandXMaxSame
-                                                                : kBandXMaxCross;
-    const float zone_far = (facing > 0) ? (me_fx + x_max) : (me_fx - x_max);
-    const float zone_lo = (zone_far < me_fx) ? zone_far : me_fx;
-    const float zone_hi = (zone_far < me_fx) ? me_fx : zone_far;
-    if (t_right < zone_lo || t_left > zone_hi) return false;
+    float x_near, x_far;
+    if (facing > 0) {
+        x_near = t_left - me_fx;
+        x_far  = t_right - me_fx;
+    } else {
+        x_near = me_fx - t_right;
+        x_far  = me_fx - t_left;
+    }
+    if (x_far < kBandXMin) return false;
+    if (x_near > kBandXMaxSame) return false;
 
     const float t_top = t_cy - t_h * 0.5f;
     const float t_bot = t_cy + t_h * 0.5f;
@@ -250,6 +270,18 @@ bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
     const float band_bot = me_fy + kBandYMax;
     if (t_bot < band_top || t_top > band_bot) return false;
 
+    const float y_clip_top = (t_top > band_top) ? t_top : band_top;
+    const float y_clip_bot = (t_bot < band_bot) ? t_bot : band_bot;
+    const float y_rep = (y_clip_top + y_clip_bot) * 0.5f - me_fy;
+    const float y_half = (y_rep < 0.0f) ? (-kBandYMin) : kBandYMax;
+    if (y_half <= 0.0f) return false;
+    const float ny = y_rep / y_half;
+    const float scale = 1.0f - ny * ny;
+    if (scale <= 0.0f) return false;
+    const float x_max_at_y = kBandXMaxSame * std::sqrt(scale);
+
+    if (x_far < kBandXMin) return false;
+    if (x_near > x_max_at_y) return false;
     return true;
 }
 
