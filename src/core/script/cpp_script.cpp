@@ -288,16 +288,7 @@ bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
 }  // namespace
 
 struct CombatConfig {
-    // E 时长（偏态）
-    int e_common_min_ms = 160;
-    int e_common_max_ms = 190;
-    int e_common_prob = 70;
-    int e_rare_lo_min_ms = 120;
-    int e_rare_lo_max_ms = 160;
-    int e_rare_hi_min_ms = 190;
-    int e_rare_hi_max_ms = 300;
-
-    // CHASE → ATTACK 延迟：脚本快速反应（不是真人犹豫）
+    // CHASE → ATTACK 延迟：脚本快速反应（游戏机制，不是真人犹豫）
     int attack_react_min_ms = 40;
     int attack_react_max_ms = 70;
 
@@ -307,16 +298,12 @@ struct CombatConfig {
 };
 
 struct CppScript::Impl {
-    static constexpr int kETapMsMin = 150;
-    static constexpr int kETapMsMax = 300;
     // 冰雷冰冻术技能延迟 810ms + 60ms 容错（帧率 33ms / 串口 ~10ms / 状态转换开销）
     static constexpr uint64_t kRecoveryMs = 870;
     static constexpr int kTurnPressDelayMinMs = 100;
     static constexpr int kTurnPressDelayMaxMs = 200;
     static constexpr int kTurnKeyReleaseDelayMs = 100;
     static constexpr uint64_t kTurnBounceMs = 200;
-    static constexpr uint64_t kMinDirHoldMinMs = 200;
-    static constexpr uint64_t kMinDirHoldMaxMs = 500;
 
     uint64_t last_log_frame = 0;
     bool inited = false;
@@ -330,7 +317,7 @@ struct CppScript::Impl {
     uint64_t attack_start_ms = 0;
     uint64_t recovery_start_ms = 0;
     bool e_pressed = false;
-    int current_e_tap_ms = kETapMsMin;
+    int current_e_tap_ms = 150;   // 初始值；实际每次攻击前重新采样
 
     // 朝向
     int facing = 1;
@@ -361,7 +348,6 @@ struct CppScript::Impl {
     CombatConfig cfg;
 
     std::mt19937 rng;
-    bool use_human_profile = false;   // true = 从真人分布采样，false = 用旧参数
 
     int active_key = 0;
     bool desired_e = false;
@@ -389,23 +375,12 @@ static bool ParseInt(const std::string& text, int* out) {
 }
 
 static void NormalizeConfig(CombatConfig* cfg) {
-    if (cfg->e_common_max_ms < cfg->e_common_min_ms) {
-        cfg->e_common_max_ms = cfg->e_common_min_ms;
-    }
-    if (cfg->e_rare_lo_max_ms < cfg->e_rare_lo_min_ms) {
-        cfg->e_rare_lo_max_ms = cfg->e_rare_lo_min_ms;
-    }
-    if (cfg->e_rare_hi_max_ms < cfg->e_rare_hi_min_ms) {
-        cfg->e_rare_hi_max_ms = cfg->e_rare_hi_min_ms;
-    }
     if (cfg->attack_react_max_ms < cfg->attack_react_min_ms) {
         cfg->attack_react_max_ms = cfg->attack_react_min_ms;
     }
     if (cfg->recovery_chase_max_ms < cfg->recovery_chase_min_ms) {
         cfg->recovery_chase_max_ms = cfg->recovery_chase_min_ms;
     }
-    if (cfg->e_common_prob < 0) cfg->e_common_prob = 0;
-    if (cfg->e_common_prob > 100) cfg->e_common_prob = 100;
 }
 
 // 从分位表分段线性采样。u ∈ [0,100] 均匀取，在相邻分位点插值。
@@ -427,39 +402,16 @@ static int64_t SampleFromProfile(const int64_t profile[][2], int n,
     return profile[n - 1][1];
 }
 
-static int SampleEHoldMs(const CombatConfig& cfg, bool use_human,
-                         std::mt19937& rng) {
-    if (use_human) {
-        // 真人分布：从分位表采样（微秒），转毫秒
-        const int64_t us = SampleFromProfile(kEHoldProfile, kEHoldProfileSize, rng);
-        return static_cast<int>(us / 1000);
-    }
-    // 旧逻辑：保留原有均匀/偏态采样
-    std::uniform_int_distribution<int> pct_dist(0, 99);
-    const int r = pct_dist(rng);
-    if (r < cfg.e_common_prob) {
-        const int span = cfg.e_common_max_ms - cfg.e_common_min_ms + 1;
-        std::uniform_int_distribution<int> d(0, span - 1);
-        return cfg.e_common_min_ms + d(rng);
-    }
-    std::uniform_int_distribution<int> coin(0, 1);
-    const bool lo = (coin(rng) == 0);
-    if (lo) {
-        const int span = cfg.e_rare_lo_max_ms - cfg.e_rare_lo_min_ms + 1;
-        std::uniform_int_distribution<int> d(0, span - 1);
-        return cfg.e_rare_lo_min_ms + d(rng);
-    }
-    const int span = cfg.e_rare_hi_max_ms - cfg.e_rare_hi_min_ms + 1;
-    std::uniform_int_distribution<int> d(0, span - 1);
-    return cfg.e_rare_hi_min_ms + d(rng);
+// E 键按住时长：从真人分位表采样（微秒转毫秒）
+static int SampleEHoldMs(std::mt19937& rng) {
+    const int64_t us = SampleFromProfile(kEHoldProfile, kEHoldProfileSize, rng);
+    return static_cast<int>(us / 1000);
 }
 
 CppScript::CppScript() : impl_(new Impl()) {}
 CppScript::~CppScript() { delete impl_; }
 
 bool CppScript::Init(const std::string& config) {
-    std::srand(static_cast<unsigned>(std::time(nullptr)));
-
     const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
     impl_->rng.seed(static_cast<uint32_t>(std::time(nullptr)) ^
                     static_cast<uint32_t>(now_ticks));
@@ -494,29 +446,10 @@ bool CppScript::Init(const std::string& config) {
             Trim(key, &key);
             Trim(value, &value);
 
-            if (key == "combat_profile") {
-                impl_->use_human_profile = (value == "human");
-                continue;
-            }
-
             int num = 0;
             if (!ParseInt(value, &num)) continue;
 
-            if (key == "combat_e_common_min_ms") {
-                impl_->cfg.e_common_min_ms = num;
-            } else if (key == "combat_e_common_max_ms") {
-                impl_->cfg.e_common_max_ms = num;
-            } else if (key == "combat_e_common_prob") {
-                impl_->cfg.e_common_prob = num;
-            } else if (key == "combat_e_rare_lo_min_ms") {
-                impl_->cfg.e_rare_lo_min_ms = num;
-            } else if (key == "combat_e_rare_lo_max_ms") {
-                impl_->cfg.e_rare_lo_max_ms = num;
-            } else if (key == "combat_e_rare_hi_min_ms") {
-                impl_->cfg.e_rare_hi_min_ms = num;
-            } else if (key == "combat_e_rare_hi_max_ms") {
-                impl_->cfg.e_rare_hi_max_ms = num;
-            } else if (key == "combat_attack_react_min_ms") {
+            if (key == "combat_attack_react_min_ms") {
                 impl_->cfg.attack_react_min_ms = num;
             } else if (key == "combat_attack_react_max_ms") {
                 impl_->cfg.attack_react_max_ms = num;
@@ -531,10 +464,7 @@ bool CppScript::Init(const std::string& config) {
 
     NormalizeConfig(&impl_->cfg);
 
-    std::printf("[script] 配置加载完成: e_common=[%d,%d]%%%d, e_rare_lo=[%d,%d], e_rare_hi=[%d,%d], react=[%d,%d], chase=[%d,%d]\n",
-        impl_->cfg.e_common_min_ms, impl_->cfg.e_common_max_ms, impl_->cfg.e_common_prob,
-        impl_->cfg.e_rare_lo_min_ms, impl_->cfg.e_rare_lo_max_ms,
-        impl_->cfg.e_rare_hi_min_ms, impl_->cfg.e_rare_hi_max_ms,
+    std::printf("[script] 配置: react=[%d,%d], chase=[%d,%d]\n",
         impl_->cfg.attack_react_min_ms, impl_->cfg.attack_react_max_ms,
         impl_->cfg.recovery_chase_min_ms, impl_->cfg.recovery_chase_max_ms);
     std::fflush(stdout);
@@ -594,7 +524,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                             impl_->state = Impl::State::ATTACK;
                             impl_->attack_start_ms = now;
                             impl_->e_pressed = true;
-                            impl_->current_e_tap_ms = SampleEHoldMs(impl_->cfg, impl_->use_human_profile, impl_->rng);
+                            impl_->current_e_tap_ms = SampleEHoldMs(impl_->rng);
                             std::printf("[script] E 按下时长: %d ms\n",
                                         impl_->current_e_tap_ms);
                             std::fflush(stdout);
@@ -610,12 +540,12 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
                         impl_->facing = target_dir;                // 新增：与 turn_dir_key 同帧同步 facing
                         impl_->last_dir_ms = now;                  // 新增：与 CHASE 内转向一致，重置冷却计时
-                        impl_->turn_press_delay_ms =
-                            Impl::kTurnPressDelayMinMs +
-                            (std::rand() % (Impl::kTurnPressDelayMaxMs - Impl::kTurnPressDelayMinMs + 1));
-                        impl_->turn_e_tap_ms =
-                            Impl::kETapMsMin +
-                            (std::rand() % (Impl::kETapMsMax - Impl::kETapMsMin + 1));
+                        {
+                            std::uniform_int_distribution<int> dist(
+                                Impl::kTurnPressDelayMinMs, Impl::kTurnPressDelayMaxMs);
+                            impl_->turn_press_delay_ms = dist(impl_->rng);
+                        }
+                        impl_->turn_e_tap_ms = SampleEHoldMs(impl_->rng);
                         impl_->turn_key_pressed = false;
                         impl_->turn_e_pressed = false;
                     }
@@ -624,8 +554,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 else if (in_band && is_front && fresh_target) {
                     impl_->pending_attack = true;
                     impl_->pending_attack_start_ms = now;
-                    impl_->pending_attack_delay_ms = impl_->cfg.attack_react_min_ms +
-                        (std::rand() % (impl_->cfg.attack_react_max_ms - impl_->cfg.attack_react_min_ms + 1));
+                    {
+                        std::uniform_int_distribution<int> dist(
+                            impl_->cfg.attack_react_min_ms, impl_->cfg.attack_react_max_ms);
+                        impl_->pending_attack_delay_ms = dist(impl_->rng);
+                    }
                     std::printf("[script] 攻击反应延迟: %d ms\n",
                                 impl_->pending_attack_delay_ms);
                     std::fflush(stdout);
@@ -692,8 +625,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     if (!impl_->pending_chase) {
                         impl_->pending_chase = true;
                         impl_->pending_chase_start_ms = now;
-                        impl_->pending_chase_delay_ms = impl_->cfg.recovery_chase_min_ms +
-                            (std::rand() % (impl_->cfg.recovery_chase_max_ms - impl_->cfg.recovery_chase_min_ms + 1));
+                        {
+                            std::uniform_int_distribution<int> dist(
+                                impl_->cfg.recovery_chase_min_ms, impl_->cfg.recovery_chase_max_ms);
+                            impl_->pending_chase_delay_ms = dist(impl_->rng);
+                        }
                     }
                     if (now - impl_->pending_chase_start_ms >=
                         static_cast<uint64_t>(impl_->pending_chase_delay_ms)) {
@@ -711,8 +647,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     const float dx_target = impl_->target.cx - impl_->me.fx;
     const int target_dir = (dx_target > 0) ? 1 : -1;
 
-    // 非 CHASE 状态：清按住计时，保证下次进 CHASE 从头采样
-    if (impl_->state != Impl::State::CHASE) {
+    if (impl_->state == Impl::State::IDLE) {
         impl_->dir_press_start_ms = 0;
         impl_->dir_min_hold_ms = 0;
         impl_->active_dir_key = 0;
@@ -727,51 +662,8 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         case Impl::State::CHASE: {
             const float abs_dx = std::fabs(dx_target);
             const bool need_move = (abs_dx >= 0.02f);
-
-            // 1. 理想方向：纯由 dx_target 决定，不看 facing
             const int want_dir = need_move ? ((dx_target > 0) ? 0x27 : 0x25) : 0;
-
-            // 2. 过冲保护：怪在身后 → 允许立即切换
-            const bool target_behind =
-                (impl_->facing > 0 && dx_target < 0) ||
-                (impl_->facing < 0 && dx_target > 0);
-
-            // 3. 最短按住约束：正在按住某个键，想切/松但按得不够久，且怪不在身后 → 保持原键
-            int out_dir = want_dir;
-            if (impl_->active_dir_key != 0 && out_dir != impl_->active_dir_key) {
-                const bool held_long_enough =
-                    (now - impl_->dir_press_start_ms) >= impl_->dir_min_hold_ms;
-                if (!held_long_enough && !target_behind) {
-                    out_dir = impl_->active_dir_key;
-                }
-            }
-
-            // 4. 更新按住计时：按键变化（含换键 / 松手）时重置
-            if (out_dir != impl_->active_dir_key) {
-                if (out_dir != 0) {
-                    impl_->dir_press_start_ms = now;
-                    std::uniform_int_distribution<uint64_t> dist(
-                        Impl::kMinDirHoldMinMs, Impl::kMinDirHoldMaxMs);
-                    impl_->dir_min_hold_ms = dist(impl_->rng);
-                } else {
-                    impl_->dir_press_start_ms = 0;
-                    impl_->dir_min_hold_ms = 0;
-                }
-            }
-
-            // 5. facing 从 out_dir 反推——保证与实际按键一致（I10）
-            const int old_facing = impl_->facing;
-            if (out_dir == 0x27) {
-                impl_->facing = 1;
-            } else if (out_dir == 0x25) {
-                impl_->facing = -1;
-            }
-            if (impl_->facing != old_facing) {
-                impl_->last_dir_ms = now;
-            }
-
-            impl_->active_dir_key = out_dir;
-            desired_dir = out_dir;
+            desired_dir = want_dir;
             desired_e = false;
             break;
         }
@@ -796,6 +688,53 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             desired_e = false;
             break;
     }
+
+    // ===== 统一的方向键最短按住约束 =====
+    // 规则：
+    //   1. IDLE 状态：me/target 丢失 → 该松，不受最短按住约束
+    //   2. 其它状态：若正在按住某方向键且未满最短时长，且新输出想换键/松手
+    //      （怪不在身后的前提下）→ 保持原键
+    //   3. facing 永远从最终 out_dir 反推（I10）
+
+    if (impl_->state != Impl::State::IDLE && impl_->active_dir_key != 0) {
+        const bool want_change = (desired_dir != impl_->active_dir_key);
+        if (want_change) {
+            const bool held_long_enough =
+                (now - impl_->dir_press_start_ms) >= impl_->dir_min_hold_ms;
+            const bool target_behind =
+                (impl_->facing > 0 && dx_target < 0) ||
+                (impl_->facing < 0 && dx_target > 0);
+            if (!held_long_enough && !target_behind) {
+                desired_dir = impl_->active_dir_key;
+            }
+        }
+    }
+
+    // 更新计时：按键变化时重置或清空
+    if (desired_dir != impl_->active_dir_key) {
+        if (desired_dir != 0) {
+            impl_->dir_press_start_ms = now;
+            // 方向键最短按住：与 E 键同源（真人分位表采样，微秒转毫秒）
+            const int64_t hold_us = SampleFromProfile(kEHoldProfile, kEHoldProfileSize, impl_->rng);
+            impl_->dir_min_hold_ms = static_cast<uint64_t>(hold_us / 1000);
+        } else {
+            impl_->dir_press_start_ms = 0;
+            impl_->dir_min_hold_ms = 0;
+        }
+    }
+
+    // facing 从 desired_dir 反推
+    const int old_facing = impl_->facing;
+    if (desired_dir == 0x27) {
+        impl_->facing = 1;
+    } else if (desired_dir == 0x25) {
+        impl_->facing = -1;
+    }
+    if (impl_->facing != old_facing) {
+        impl_->last_dir_ms = now;
+    }
+
+    impl_->active_dir_key = desired_dir;
 
     impl_->active_key = desired_dir;
     impl_->desired_e = desired_e;
