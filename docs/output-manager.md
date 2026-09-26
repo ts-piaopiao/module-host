@@ -23,6 +23,44 @@
 - 0-33ms 随机阻塞（模糊化脚本梳状，S12 候选）
 - 脚本输出"时长意图"（方案 D，需要重构脚本接口）
 
+### 1.4 脚本 33ms 梳状：已解决（2026-09-26）
+
+**问题**：脚本通过 `SendScript` 每帧提交动作，时刻落在 33ms 网格上。
+
+**解决路径（3 步）**：
+
+1. **脚本输出语义变更**：脚本不再输出差分（press/release），改为输出"希望按住的键"（只 press）。OutputManager 对比上一帧意图自动算差分。架构上把"何时按/何时放"的控制权从脚本移到 OutputManager。
+
+2. **高精度抖动**：OutputManager 发送线程对"脚本新批的首个动作"加 0~33ms 随机延迟。用 `CreateWaitableTimerEx(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)` 实现约 0.5ms 精度，**不使用 `timeBeginPeriod`**（避免全局功耗副作用）。随机源用 `std::mt19937`（质量优于 `rand()`，且为将来切换真人分布预留）。
+
+3. **记录精度修正**：`Recorder` 的时间戳从 `GetTickCount64()`（未调 `timeBeginPeriod` 时分辨率仅 15.6ms）改为 `QueryPerformanceCounter`（微秒级）。这是**关键发现**——发送端已精确，但记录端的量化把精度掩盖了。
+
+**验证方法**：用 `experiments/send_log_analyzer` 分析 `snd` 事件的时间戳（微秒），计算 mod N 均匀性。
+
+**验证数据**（20000 帧 fake_scene，`snd count = 334`）：
+
+| mod | chi2 | df | 均匀性 |
+|---|---|---|---|
+| 33 | 36.7 | 32 | ✓ |
+| 15 | 9.8 | 14 | ✓ |
+| 7 | 6.4 | 6 | ✓ |
+| 5 | 1.5 | 4 | ✓ |
+
+**修复前对比**（用旧 ms 时间戳）：
+- mod 5：chi2 = 33.2（df=4）—— 明显集中
+- mod 15：chi2 = 41.7（df=14）—— 明显集中
+
+**结论**：所有模值的 chi2 均落在均匀分布理论值附近。33ms 梳状已消除。
+
+**验证工具**：
+- `experiments/send_log_analyzer`——多模值均匀性分析
+- `src/stubs/fake_scene_capture.cpp` + `src/stubs/fake_scene_policy.cpp`——无硬件可复现的测试场景
+- `scripts/prepare_fake_scene_dir.ps1`——测试目录组装
+
+**未做**：
+- 最小间隔约束（OM 强制"同键两次动作至少 T ms"）——独立任务
+- 真人分布采样（用真实人类按键数据替换 uniform）——需要先采集真人按键数据，另行设计
+
 ## 二、架构
 
 ```
