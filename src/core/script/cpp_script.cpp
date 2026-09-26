@@ -1,9 +1,13 @@
 #include "cpp_script.h"
 
+#include "human_profile.h"
+
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <random>
 
 namespace {
 
@@ -293,6 +297,9 @@ struct CppScript::Impl {
 
     CombatConfig cfg;
 
+    std::mt19937 rng;
+    bool use_human_profile = false;   // true = 从真人分布采样，false = 用旧参数
+
     int active_key = 0;
     bool desired_e = false;
 };
@@ -338,21 +345,50 @@ static void NormalizeConfig(CombatConfig* cfg) {
     if (cfg->e_common_prob > 100) cfg->e_common_prob = 100;
 }
 
-static int SampleEHoldMs(const CombatConfig& cfg) {
-    const int r = std::rand() % 100;
+// 从分位表分段线性采样。u ∈ [0,100] 均匀取，在相邻分位点插值。
+static int64_t SampleFromProfile(const int64_t profile[][2], int n,
+                                 std::mt19937& rng) {
+    std::uniform_real_distribution<double> dist(0.0, 100.0);
+    const double u = dist(rng);
+    for (int i = 0; i < n - 1; ++i) {
+        if (u <= static_cast<double>(profile[i + 1][0])) {
+            const double p0 = static_cast<double>(profile[i][0]);
+            const double p1 = static_cast<double>(profile[i + 1][0]);
+            const double v0 = static_cast<double>(profile[i][1]);
+            const double v1 = static_cast<double>(profile[i + 1][1]);
+            if (p1 <= p0) return static_cast<int64_t>(v0);
+            const double t = (u - p0) / (p1 - p0);
+            return static_cast<int64_t>(v0 + t * (v1 - v0));
+        }
+    }
+    return profile[n - 1][1];
+}
+
+static int SampleEHoldMs(const CombatConfig& cfg, bool use_human,
+                         std::mt19937& rng) {
+    if (use_human) {
+        // 真人分布：从分位表采样（微秒），转毫秒
+        const int64_t us = SampleFromProfile(kEHoldProfile, kEHoldProfileSize, rng);
+        return static_cast<int>(us / 1000);
+    }
+    // 旧逻辑：保留原有均匀/偏态采样
+    std::uniform_int_distribution<int> pct_dist(0, 99);
+    const int r = pct_dist(rng);
     if (r < cfg.e_common_prob) {
         const int span = cfg.e_common_max_ms - cfg.e_common_min_ms + 1;
-        return cfg.e_common_min_ms + (std::rand() % span);
+        std::uniform_int_distribution<int> d(0, span - 1);
+        return cfg.e_common_min_ms + d(rng);
     }
-    // rare：两段等分
-    const bool lo = (std::rand() % 2) == 0;
+    std::uniform_int_distribution<int> coin(0, 1);
+    const bool lo = (coin(rng) == 0);
     if (lo) {
         const int span = cfg.e_rare_lo_max_ms - cfg.e_rare_lo_min_ms + 1;
-        return cfg.e_rare_lo_min_ms + (std::rand() % span);
-    } else {
-        const int span = cfg.e_rare_hi_max_ms - cfg.e_rare_hi_min_ms + 1;
-        return cfg.e_rare_hi_min_ms + (std::rand() % span);
+        std::uniform_int_distribution<int> d(0, span - 1);
+        return cfg.e_rare_lo_min_ms + d(rng);
     }
+    const int span = cfg.e_rare_hi_max_ms - cfg.e_rare_hi_min_ms + 1;
+    std::uniform_int_distribution<int> d(0, span - 1);
+    return cfg.e_rare_hi_min_ms + d(rng);
 }
 
 CppScript::CppScript() : impl_(new Impl()) {}
@@ -360,6 +396,10 @@ CppScript::~CppScript() { delete impl_; }
 
 bool CppScript::Init(const std::string& config) {
     std::srand(static_cast<unsigned>(std::time(nullptr)));
+
+    const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    impl_->rng.seed(static_cast<uint32_t>(std::time(nullptr)) ^
+                    static_cast<uint32_t>(now_ticks));
 
     impl_->cfg = CombatConfig{};
 
@@ -390,6 +430,11 @@ bool CppScript::Init(const std::string& config) {
             std::string value = trimmed.substr(eq + 1);
             Trim(key, &key);
             Trim(value, &value);
+
+            if (key == "combat_profile") {
+                impl_->use_human_profile = (value == "human");
+                continue;
+            }
 
             int num = 0;
             if (!ParseInt(value, &num)) continue;
@@ -490,7 +535,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                             impl_->state = Impl::State::ATTACK;
                             impl_->attack_start_ms = now;
                             impl_->e_pressed = true;
-                            impl_->current_e_tap_ms = SampleEHoldMs(impl_->cfg);
+                            impl_->current_e_tap_ms = SampleEHoldMs(impl_->cfg, impl_->use_human_profile, impl_->rng);
                             std::printf("[script] E 按下时长: %d ms\n",
                                         impl_->current_e_tap_ms);
                             std::fflush(stdout);
