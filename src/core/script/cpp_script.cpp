@@ -294,9 +294,7 @@ struct CppScript::Impl {
     CombatConfig cfg;
 
     int active_key = 0;
-    int last_pressed = 0;
     bool desired_e = false;
-    bool last_desired_e = false;
 };
 
 static void Trim(const std::string& s, std::string* out) {
@@ -710,42 +708,21 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 void CppScript::GetDecision(core_decision* out) {
     out->out_count = 0;
 
-    // 方向键差分
-    if (impl_->active_key != impl_->last_pressed) {
-        if (impl_->last_pressed != 0 && out->out_count < CORE_DECISION_CAPACITY) {
-            out->actions[out->out_count].kind = CORE_ACTION_KEY;
-            out->actions[out->out_count].a = impl_->last_pressed;
-            out->actions[out->out_count].b = 0;
-            out->actions[out->out_count].c = 0;
-            out->out_count++;
-        }
-        if (impl_->active_key != 0 && out->out_count < CORE_DECISION_CAPACITY) {
-            out->actions[out->out_count].kind = CORE_ACTION_KEY;
-            out->actions[out->out_count].a = impl_->active_key;
-            out->actions[out->out_count].b = 1;
-            out->actions[out->out_count].c = 0;
-            out->out_count++;
-        }
-        impl_->last_pressed = impl_->active_key;
+    // 新语义：输出"当前希望按住的键"（只输出 press，不输出 release）。
+    // 释放由 OutputManager 对比上一帧意图自动产生。
+    if (impl_->active_key != 0 && out->out_count < CORE_DECISION_CAPACITY) {
+        out->actions[out->out_count].kind = CORE_ACTION_KEY;
+        out->actions[out->out_count].a = impl_->active_key;
+        out->actions[out->out_count].b = 1;
+        out->actions[out->out_count].c = 0;
+        out->out_count++;
     }
-
-    // E键差分（简化：仅根据 desired_e 和 e_pressed 状态）
-    if (impl_->desired_e != impl_->last_desired_e) {
-        if (impl_->last_desired_e && out->out_count < CORE_DECISION_CAPACITY) {
-            out->actions[out->out_count].kind = CORE_ACTION_KEY;
-            out->actions[out->out_count].a = 0x45;
-            out->actions[out->out_count].b = 0;
-            out->actions[out->out_count].c = 0;
-            out->out_count++;
-        }
-        if (impl_->desired_e && out->out_count < CORE_DECISION_CAPACITY) {
-            out->actions[out->out_count].kind = CORE_ACTION_KEY;
-            out->actions[out->out_count].a = 0x45;
-            out->actions[out->out_count].b = 1;
-            out->actions[out->out_count].c = 0;
-            out->out_count++;
-        }
-        impl_->last_desired_e = impl_->desired_e;
+    if (impl_->desired_e && out->out_count < CORE_DECISION_CAPACITY) {
+        out->actions[out->out_count].kind = CORE_ACTION_KEY;
+        out->actions[out->out_count].a = 0x45;
+        out->actions[out->out_count].b = 1;
+        out->actions[out->out_count].c = 0;
+        out->out_count++;
     }
 } // End of GetDecision
 

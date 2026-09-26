@@ -242,6 +242,7 @@ struct OutputManager::Impl {
     bool script_paused = false;
 
     std::set<int> script_pressed_keys;
+    std::set<int> script_intent_keys;
 
     std::thread worker;
 
@@ -360,22 +361,50 @@ void OutputManager::SendScript(const core_decision* decision) {
     if (decision == nullptr || decision->out_count > CORE_DECISION_CAPACITY) {
         return;
     }
-    const uint64_t batch = ++impl_->script_batch_counter;
+
+    // 从脚本输出提取"当前意图按住的键"（只接受 press 动作）
+    std::set<int> intent_now;
     for (uint32_t i = 0; i < decision->out_count; ++i) {
         const core_action& act = decision->actions[i];
-        QueuedAction qa;
-        qa.act = act;
-        qa.source = 0;
-        qa.batch_id = batch;
-        impl_->queue.push_back(qa);
-        if (act.kind == CORE_ACTION_KEY) {
-            if (act.b == 1) {
-                impl_->script_pressed_keys.insert(act.a);
-            } else if (act.b == 0) {
-                impl_->script_pressed_keys.erase(act.a);
-            }
+        if (act.kind == CORE_ACTION_KEY && act.b == 1) {
+            intent_now.insert(static_cast<int>(act.a));
+        }
+        // 脚本按新约定不输出 release，但容错：忽略所有 b == 0 的 KEY 动作
+    }
+
+    const uint64_t batch = ++impl_->script_batch_counter;
+
+    // 差分之一：上一帧意图中消失的键 → release
+    for (int vk : impl_->script_intent_keys) {
+        if (intent_now.find(vk) == intent_now.end()) {
+            QueuedAction qa;
+            qa.act.kind = CORE_ACTION_KEY;
+            qa.act.a = vk;
+            qa.act.b = 0;
+            qa.act.c = 0;
+            qa.source = 0;
+            qa.batch_id = batch;
+            impl_->queue.push_back(qa);
+            impl_->script_pressed_keys.erase(vk);
         }
     }
+
+    // 差分二：本帧意图中新增的键 → press
+    for (int vk : intent_now) {
+        if (impl_->script_intent_keys.find(vk) == impl_->script_intent_keys.end()) {
+            QueuedAction qa;
+            qa.act.kind = CORE_ACTION_KEY;
+            qa.act.a = vk;
+            qa.act.b = 1;
+            qa.act.c = 0;
+            qa.source = 0;
+            qa.batch_id = batch;
+            impl_->queue.push_back(qa);
+            impl_->script_pressed_keys.insert(vk);
+        }
+    }
+
+    impl_->script_intent_keys = std::move(intent_now);
     impl_->cv.notify_one();
 }
 
@@ -409,6 +438,7 @@ void OutputManager::SetScriptPaused(bool paused) {
             impl_->queue.push_back(qa);
         }
         impl_->script_pressed_keys.clear();
+        impl_->script_intent_keys.clear();
         impl_->cv.notify_one();
     }
 }

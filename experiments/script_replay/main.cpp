@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -50,7 +51,7 @@ const char* InvariantName(int idx) {
         case 5: return "I6 进入 state=3 的前一帧 facing 与 target 反号";
         case 6: return "I7 state 只能是 0/1/2/3/4";
         case 7: return "I8 state 转移合法（0->1 / 1->0,1,2,3 / 2->0,2,4 / 3->0,3,4 / 4->0,1,4）";
-        case 8: return "I9 KEY 动作 press/release 合法（不重复按下 / 不未按先放）";
+        case 8: return "I9 脚本意图合法（每帧每键只声明一次，且只含 press）";
         case 9: return "I10 active_key 方向与 facing 一致（reversing 除外）";
         case 10: return "I11 (!me_locked || !target_locked) -> state == IDLE";
         default: return "?";
@@ -188,7 +189,6 @@ int main(int argc, char** argv) {
     long long exempt_i4 = 0;
     int prev_state = -1;
     long long exempt_i8 = 0;    // 保留扩展位，本次不用
-    std::map<int32_t, bool> key_down;   // key_code -> 当前是否按下（I9）
 
     long long replayed = 0;
     for (const auto& kv : frames) {
@@ -225,23 +225,26 @@ int main(int argc, char** argv) {
         dec.out_count = 0;
         script.GetDecision(&dec);
 
-        // I9: KEY 动作 press/release 合法（逐帧累积）
-        for (uint32_t ai = 0; ai < dec.out_count; ++ai) {
-            const core_action& act = dec.actions[ai];
-            if (act.kind != CORE_ACTION_KEY) continue;
-            const int32_t code = act.a;
-            const bool want_down = (act.b == 1);
-            const bool is_down = key_down[code];
-            if (want_down && is_down) {
-                ++viol[8];
-                std::printf("[I9] 违例 frame=%llu: key 0x%02X 重复按下（未释放又按）\n",
-                            (unsigned long long)frame_idx, (unsigned)code);
-            } else if (!want_down && !is_down) {
-                ++viol[8];
-                std::printf("[I9] 违例 frame=%llu: key 0x%02X 未按下就释放\n",
-                            (unsigned long long)frame_idx, (unsigned)code);
+        // I9: 脚本意图的键不重复，且只包含 press。
+        // 新架构下脚本不再输出 release，释放由 OutputManager 对比意图自动产生。
+        {
+            std::set<int32_t> seen_keys;
+            for (uint32_t ai = 0; ai < dec.out_count; ++ai) {
+                const core_action& act = dec.actions[ai];
+                if (act.kind != CORE_ACTION_KEY) continue;
+                if (act.b != 1) {
+                    ++viol[8];
+                    std::printf("[I9] 违例 frame=%llu: 脚本输出了 release（key=0x%02X）\n",
+                                (unsigned long long)frame_idx, (unsigned)act.a);
+                    continue;
+                }
+                if (seen_keys.count(act.a)) {
+                    ++viol[8];
+                    std::printf("[I9] 违例 frame=%llu: 同一帧重复声明按键 0x%02X\n",
+                                (unsigned long long)frame_idx, (unsigned)act.a);
+                }
+                seen_keys.insert(act.a);
             }
-            key_down[code] = want_down;
         }
 
         CppScriptDebugInfo dbg{};
