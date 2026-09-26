@@ -227,5 +227,176 @@ int main(int argc, char** argv) {
     }
     PrintHistogramUs("inter-event interval histogram", inter_event_us, 50000, 2000000, 60);
 
+    // ============================================================
+    // === 深度时序分析（新增）===
+    // ============================================================
+
+    // 按 key 分组的 press 时刻（用于间隔分析）
+    std::map<int32_t, std::vector<uint64_t>> press_times;
+    for (const auto& e : events) {
+        if (e.down == 1) press_times[e.vk].push_back(e.t_us);
+    }
+
+    // --- 分析 1：E→E 间隔 ---
+    {
+        auto& ts = press_times[0x45];
+        if (ts.size() >= 2) {
+            std::vector<uint64_t> gaps;
+            for (size_t i = 1; i < ts.size(); ++i) gaps.push_back(ts[i] - ts[i - 1]);
+            PrintPercentiles("E -> E interval", gaps);
+            // mod N 均匀性
+            const int mods[] = {50, 100, 200, 500};
+            for (int m : mods) {
+                std::vector<uint64_t> bins(m, 0);
+                for (auto v : gaps) bins[(v / 1000) % m]++;
+                const double exp = static_cast<double>(gaps.size()) / m;
+                double c2 = 0.0;
+                for (auto v : bins) { double d = v - exp; c2 += d * d / exp; }
+                std::printf("    E->E mod %d: chi2=%.1f (df=%d, uniform≈%d)\n",
+                            m, c2, m - 1, m - 1);
+            }
+        }
+    }
+
+    // --- 分析 2：方向键切换频率（左↔右）---
+    {
+        std::vector<int32_t> dir_seq;
+        for (const auto& e : events) {
+            if (e.down == 1 && (e.vk == 0x25 || e.vk == 0x27)) {
+                if (dir_seq.empty() || dir_seq.back() != e.vk) dir_seq.push_back(e.vk);
+            }
+        }
+        int switches = 0;
+        std::vector<uint64_t> switch_intervals;
+        uint64_t last_switch_t = 0;
+        for (size_t i = 1; i < dir_seq.size(); ++i) {
+            if (dir_seq[i] != dir_seq[i - 1]) {
+                switches++;
+                // 用该次切换的 press 时刻（近似）
+                // 简化：从 press_times 里找
+            }
+        }
+        std::printf("\n方向键切换（左<->右）总次数: %d / 总方向按下次数: %zu\n",
+                    switches, dir_seq.size());
+
+        // 更准确：直接扫 snd 序列，找出方向键反向切换的时刻
+        int32_t last_dir = 0;
+        uint64_t last_dir_t = 0;
+        int reverse_count = 0;
+        std::vector<uint64_t> reverse_intervals;
+        for (const auto& e : events) {
+            if (e.down == 1 && (e.vk == 0x25 || e.vk == 0x27)) {
+                if (last_dir != 0 && last_dir != e.vk) {
+                    reverse_count++;
+                    if (last_dir_t > 0) reverse_intervals.push_back(e.t_us - last_dir_t);
+                }
+                last_dir = e.vk;
+                last_dir_t = e.t_us;
+            }
+        }
+        std::printf("方向键反向切换次数: %d\n", reverse_count);
+        if (!reverse_intervals.empty()) {
+            PrintPercentiles("反向切换间隔", reverse_intervals);
+        }
+    }
+
+    // --- 分析 3：方向键持续按住时长（连续同向）---
+    {
+        std::vector<uint64_t> continuous_holds;
+        uint64_t run_start = 0;
+        int32_t run_vk = 0;
+        for (const auto& e : events) {
+            if (e.down == 1 && (e.vk == 0x25 || e.vk == 0x27)) {
+                if (run_vk != e.vk) {
+                    if (run_vk != 0 && run_start > 0) {
+                        continuous_holds.push_back(e.t_us - run_start);
+                    }
+                    run_vk = e.vk;
+                    run_start = e.t_us;
+                }
+            } else if (e.down == 0 && e.vk == run_vk) {
+                if (run_start > 0) {
+                    continuous_holds.push_back(e.t_us - run_start);
+                    run_start = 0;
+                    run_vk = 0;
+                }
+            }
+        }
+        if (!continuous_holds.empty()) {
+            PrintPercentiles("方向键连续按住（同向累计）", continuous_holds);
+        }
+    }
+
+    // --- 分析 4：E 时是否同时按方向键 ---
+    {
+        // 简化：把所有 KEY 的按下/释放事件按时间排序，看 E 按下时刻是否有方向键正处于按下状态
+        std::map<int32_t, uint64_t> press_start;
+        int e_alone = 0;
+        int e_with_dir = 0;
+        for (const auto& e : events) {
+            if (e.down == 1) {
+                press_start[e.vk] = e.t_us;
+                if (e.vk == 0x45) {
+                    // 检查当前是否有方向键按下
+                    bool dir_down = false;
+                    for (int32_t vk : {0x25, 0x26, 0x27, 0x28}) {
+                        auto it = press_start.find(vk);
+                        if (it != press_start.end() && it->second > 0) {
+                            dir_down = true; break;
+                        }
+                    }
+                    if (dir_down) e_with_dir++; else e_alone++;
+                }
+            } else if (e.down == 0) {
+                press_start.erase(e.vk);
+            }
+        }
+        std::printf("\nE 按下时同时有方向键: %d 次\n", e_with_dir);
+        std::printf("E 按下时无方向键（纯攻击）: %d 次\n", e_alone);
+    }
+
+    // --- 分析 5：相邻 snd 事件的最小间隔（人类物理极限）---
+    {
+        uint64_t min_gap = UINT64_MAX;
+        int min_idx = -1;
+        for (size_t i = 1; i < events.size(); ++i) {
+            uint64_t g = events[i].t_us - events[i - 1].t_us;
+            if (g < min_gap) { min_gap = g; min_idx = (int)i; }
+        }
+        std::printf("\n相邻事件最小间隔: %llu us (%.2f ms) @ i=%d\n",
+                    (unsigned long long)min_gap, min_gap / 1000.0, min_idx);
+    }
+
+    // --- 分析 6：最长无操作期 ---
+    {
+        uint64_t max_gap = 0;
+        int max_idx = -1;
+        for (size_t i = 1; i < events.size(); ++i) {
+            uint64_t g = events[i].t_us - events[i - 1].t_us;
+            if (g > max_gap) { max_gap = g; max_idx = (int)i; }
+        }
+        std::printf("最长无操作间隔: %llu us (%.2f s) @ i=%d\n",
+                    (unsigned long long)max_gap, max_gap / 1e6, max_idx);
+    }
+
+    // --- 分析 7：hold 的 mod N 均匀性 ---
+    {
+        std::vector<uint64_t> all_holds;
+        for (auto& kv : hold_us) for (auto v : kv.second) all_holds.push_back(v);
+        if (!all_holds.empty()) {
+            const int mods[] = {50, 100, 200};
+            std::printf("\n所有 hold 的 mod N 均匀性:\n");
+            for (int m : mods) {
+                std::vector<uint64_t> bins(m, 0);
+                for (auto v : all_holds) bins[(v / 1000) % m]++;
+                const double exp = static_cast<double>(all_holds.size()) / m;
+                double c2 = 0.0;
+                for (auto v : bins) { double d = v - exp; c2 += d * d / exp; }
+                std::printf("  hold mod %d: chi2=%.1f (df=%d, uniform≈%d)\n",
+                            m, c2, m - 1, m - 1);
+            }
+        }
+    }
+
     return 0;
 }
