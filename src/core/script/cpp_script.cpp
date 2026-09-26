@@ -316,6 +316,13 @@ struct CppScript::Impl {
     MeLockState me;
     TargetLockState target;
 
+    // EMA 平滑（α=0.7）：减弱 YOLO 检测抖对下游判定的影响
+    float smooth_me_fx = 0.0f;
+    float smooth_me_fy = 0.0f;
+    float smooth_target_cx = 0.0f;
+    float smooth_target_cy = 0.0f;
+    bool smooth_init = false;
+
     uint64_t attack_start_ms = 0;
     uint64_t recovery_start_ms = 0;
     uint64_t last_attack_release_ms = 0;   // 上次 E 释放时刻；用于独立技能冷却检查
@@ -489,11 +496,38 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 
     const uint64_t now = world.now_ms;
 
+    // EMA 平滑：写回 me.fx/fy、target.cx/cy，下游判定自动使用平滑值。
+    // 注意不动 lock_fx/lock_fy/lock_cx/lock_cy——那些是匹配状态，需要原始值。
+    if (impl_->me.valid && impl_->target.has) {
+        if (!impl_->smooth_init) {
+            impl_->smooth_me_fx = impl_->me.fx;
+            impl_->smooth_me_fy = impl_->me.fy;
+            impl_->smooth_target_cx = impl_->target.cx;
+            impl_->smooth_target_cy = impl_->target.cy;
+            impl_->smooth_init = true;
+        } else {
+            constexpr float kAlpha = 0.7f;
+            constexpr float kOneMinusAlpha = 0.3f;
+            impl_->smooth_me_fx     = kAlpha * impl_->smooth_me_fx     + kOneMinusAlpha * impl_->me.fx;
+            impl_->smooth_me_fy     = kAlpha * impl_->smooth_me_fy     + kOneMinusAlpha * impl_->me.fy;
+            impl_->smooth_target_cx = kAlpha * impl_->smooth_target_cx + kOneMinusAlpha * impl_->target.cx;
+            impl_->smooth_target_cy = kAlpha * impl_->smooth_target_cy + kOneMinusAlpha * impl_->target.cy;
+        }
+        impl_->me.fx = impl_->smooth_me_fx;
+        impl_->me.fy = impl_->smooth_me_fy;
+        impl_->target.cx = impl_->smooth_target_cx;
+        impl_->target.cy = impl_->smooth_target_cy;
+    } else {
+        impl_->smooth_init = false;
+    }
+
     if (!impl_->me.valid || !impl_->target.has) {
         if (impl_->state != Impl::State::IDLE) {
             impl_->state = Impl::State::IDLE;
+            if (impl_->e_pressed) { impl_->last_attack_release_ms = now; }
             impl_->e_pressed = false;
             impl_->turn_key_pressed = false;
+            if (impl_->turn_e_pressed) { impl_->last_attack_release_ms = now; }
             impl_->turn_e_pressed = false;
             impl_->pending_attack = false;
             impl_->pending_chase = false;
@@ -536,7 +570,17 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 }
                 // 背面进带：S7 逻辑（转身）
                 else if (in_band && !is_front && fresh_target) {
-                    if (now - impl_->last_dir_ms >= Impl::kTurnBounceMs) {
+                    // 技能冷却检查：与正面进带同样对待。
+                    // 若上次 E release 距"预计实际按 E"（now + bounce + turn_press_delay 下限）还不到
+                    // kSkillCooldownMs，则不进入 ATTACK_TURN，留在 CHASE 等冷却。
+                    // 注意：bounce 是入场门闩（可能已过），不计入时间保守项；
+                    // 只用 turn_press_delay 下限做保守估计。
+                    const bool cooldown_ok_turn =
+                        (impl_->last_attack_release_ms == 0) ||
+                        ((now - impl_->last_attack_release_ms) +
+                            static_cast<uint64_t>(Impl::kTurnPressDelayMinMs)
+                                >= Impl::kSkillCooldownMs);
+                    if (cooldown_ok_turn && now - impl_->last_dir_ms >= Impl::kTurnBounceMs) {
                         impl_->state = Impl::State::ATTACK_TURN;
                         impl_->turn_phase = 0;
                         impl_->turn_phase_start_ms = now;
@@ -552,6 +596,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         impl_->turn_key_pressed = false;
                         impl_->turn_e_pressed = false;
                     }
+                    // 冷却未到或 bounce 未过：留在 CHASE，下一帧再试
                 }
                 // 正面进带：设 pending (S8)；先检查技能冷却
                 else if (in_band && is_front && fresh_target) {
@@ -581,6 +626,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             case Impl::State::ATTACK: {
                 if (!impl_->me.valid || !impl_->target.has) {
                     impl_->state = Impl::State::IDLE;
+                    if (impl_->e_pressed) { impl_->last_attack_release_ms = now; }
                     impl_->e_pressed = false;
                     break;
                 }
