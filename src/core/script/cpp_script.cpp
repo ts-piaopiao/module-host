@@ -20,7 +20,9 @@ constexpr float kTargetMatchY = 0.037f;
 constexpr uint64_t kTargetLoseMs = 500;
 constexpr float kSamePlatY = 0.028f;
 constexpr float kBandXMin = 0.010f;
-constexpr float kBandXMaxSame = 0.135f;
+// 冰冻术 300px 攻击范围（角色中心到怪物中心），归一化 = 300/1920 = 0.156。
+// 留 12px 容错 → 288/1920 = 0.150
+constexpr float kBandXMaxSame = 0.150f;
 constexpr float kBandXMaxCross = 0.104f;
 constexpr float kBandYMin = -0.074f;
 constexpr float kBandYMax = 0.019f;
@@ -251,9 +253,6 @@ struct CppScript::Impl {
     static constexpr int kTurnKeyReleaseDelayMs = 100;
     static constexpr uint64_t kTurnBounceMs = 200;
     static constexpr uint64_t kChaseTurnCooldownMs = 300;
-    static constexpr float kNearFaceThreshold = 0.010f;
-    static constexpr int kReverseDurationMinMs = 200;
-    static constexpr int kReverseDurationMaxMs = 500;
 
     uint64_t last_log_frame = 0;
     bool inited = false;
@@ -281,10 +280,6 @@ struct CppScript::Impl {
     int turn_e_tap_ms = 0;
     bool turn_key_pressed = false;
     bool turn_e_pressed = false;
-
-    // 贴脸后退
-    bool reversing = false;
-    uint64_t reverse_start_ms = 0;
 
     // 攻击延迟 (S8)
     bool pending_attack = false;
@@ -498,7 +493,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         if (impl_->state != Impl::State::IDLE) {
             impl_->state = Impl::State::IDLE;
             impl_->e_pressed = false;
-            impl_->reversing = false;
             impl_->turn_key_pressed = false;
             impl_->turn_e_pressed = false;
             impl_->pending_attack = false;
@@ -509,8 +503,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         const float dx_target = impl_->target.cx - impl_->me.fx;
         const int target_dir = (dx_target > 0) ? 1 : -1;
         const bool is_front = (target_dir == impl_->facing);
-        const bool too_close = impl_->me.valid && impl_->target.has &&
-                               (std::fabs(dx_target) < Impl::kNearFaceThreshold);
         const bool fresh_target = (impl_->target.lost_since == 0);
 
         switch (impl_->state) {
@@ -524,7 +516,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 if (!impl_->me.valid || !impl_->target.has) {
                     impl_->pending_attack = false;
                     impl_->state = Impl::State::IDLE;
-                    impl_->reversing = false;
                 }
                 // 已在 pending：检查延迟
                 else if (impl_->pending_attack) {
@@ -571,13 +562,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     std::printf("[script] 攻击反应延迟: %d ms\n",
                                 impl_->pending_attack_delay_ms);
                     std::fflush(stdout);
-                }
-                // 贴脸后退：S7 逻辑
-                else if (too_close) {
-                    if (!impl_->reversing) {
-                        impl_->reversing = true;
-                        impl_->reverse_start_ms = now;
-                    }
                 }
                 break;
 
@@ -659,8 +643,6 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     bool desired_e = false;
     const float dx_target = impl_->target.cx - impl_->me.fx;
     const int target_dir = (dx_target > 0) ? 1 : -1;
-    const bool too_close = impl_->me.valid && impl_->target.has &&
-                           (std::fabs(dx_target) < Impl::kNearFaceThreshold);
 
     switch (impl_->state) {
         case Impl::State::IDLE:
@@ -669,34 +651,22 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             break;
 
         case Impl::State::CHASE: {
-            if (too_close && impl_->reversing) {
-                const int reverse_duration =
-                    Impl::kReverseDurationMinMs +
-                    (std::rand() % (Impl::kReverseDurationMaxMs - Impl::kReverseDurationMinMs + 1));
-                if (now - impl_->reverse_start_ms <
-                    static_cast<uint64_t>(reverse_duration)) {
-                    desired_dir = (dx_target > 0) ? 0x25 : 0x27;
-                } else {
-                    impl_->reversing = false;
-                }
+            const float abs_dx = std::fabs(dx_target);
+            if (abs_dx < 0.02f) {
+                desired_dir = 0;
             } else {
-                const float abs_dx = std::fabs(dx_target);
-                if (abs_dx < 0.02f) {
-                    desired_dir = 0;
-                } else {
-                    const int want_dir = (dx_target > 0) ? 0x27 : 0x25;
-                    const int want_facing = (dx_target > 0) ? 1 : -1;
-                    if (want_facing != impl_->facing) {
-                        if (now - impl_->last_dir_ms < Impl::kChaseTurnCooldownMs) {
-                            desired_dir = (impl_->facing > 0) ? 0x27 : 0x25;
-                        } else {
-                            desired_dir = (dx_target > 0) ? 0x27 : 0x25;
-                            impl_->facing = (dx_target > 0) ? 1 : -1;
-                            impl_->last_dir_ms = now;
-                        }
+                const int want_dir = (dx_target > 0) ? 0x27 : 0x25;
+                const int want_facing = (dx_target > 0) ? 1 : -1;
+                if (want_facing != impl_->facing) {
+                    if (now - impl_->last_dir_ms < Impl::kChaseTurnCooldownMs) {
+                        desired_dir = (impl_->facing > 0) ? 0x27 : 0x25;
                     } else {
                         desired_dir = (dx_target > 0) ? 0x27 : 0x25;
+                        impl_->facing = (dx_target > 0) ? 1 : -1;
+                        impl_->last_dir_ms = now;
                     }
+                } else {
+                    desired_dir = (dx_target > 0) ? 0x27 : 0x25;
                 }
             }
             desired_e = false;
@@ -789,5 +759,4 @@ void CppScript::GetDebugInfo(CppScriptDebugInfo* out) const {
     out->target_cx = impl_->target.cx;
     out->active_key = impl_->active_key;
     out->desired_e = impl_->desired_e;
-    out->reversing = impl_->reversing;
 }
