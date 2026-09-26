@@ -63,7 +63,11 @@ int main(int argc, char** argv) {
         if (j.value("type", "") != "snd") continue;
         ++snd_count;
         const int src = j.value("src", -1);
-        const uint64_t t = j.value("t", 0ULL);
+        const uint64_t t_us = j.value("t", 0ULL);
+        // Recorder 现在写的是微秒；分析工具统一换算为毫秒。
+        // 兼容旧数据：旧数据是毫秒，值会小于 1e9（约 11.5 天）。新数据微秒会远大于。
+        // 简单规则：若 t_us < 1e9 视为已是毫秒，否则除以 1000。
+        const uint64_t t = (t_us < 1000000000ULL) ? t_us : (t_us / 1000ULL);
         by_src[src].push_back(t);
     }
     in.close();
