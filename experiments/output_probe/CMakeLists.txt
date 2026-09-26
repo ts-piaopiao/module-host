@@ -8,9 +8,11 @@ add_executable(output_probe main.cpp)
 target_include_directories(output_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party
 )
 target_sources(output_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/output_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/recorder.cpp
 )
 target_compile_options(output_probe PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 target_link_libraries(output_probe PRIVATE ws2_32)
