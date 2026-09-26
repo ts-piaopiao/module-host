@@ -52,13 +52,32 @@
 
 **结论**：所有模值的 chi2 均落在均匀分布理论值附近。33ms 梳状已消除。
 
+**阶段 3：最小间隔约束**
+
+在抖动基础上，OutputManager 对**脚本来源**（`source == 0`）的按键强制最小间隔：
+
+- `output_min_hold_ms`（默认 50）——同键 press 到 release 至少间隔
+- `output_min_gap_ms`（默认 30）——同键两次 press 至少间隔
+
+**约束基于 QPC 微秒时刻**（不是 `GetTickCount64`），基准是"**实际发送时刻**"——
+先做抖动，再做约束，确保抖动不能抵消约束。这样即使脚本输出 20ms 的极短 E，
+实际发送仍 ≥ 50ms。
+
+配置键 `output_*` 是宿主级（OutputManager 读），不经过插件透传。
+
+验证：`src/stubs/fake_scene_attack_policy.cpp` 让 monster 落在攻击带内，
+脚本产生 E 键动作。配合 `combat_e_common_min_ms=20` 强制脚本输出极短 E，
+实测 15 对 press→release 间隔全部 ≥ 50.23ms（约束生效）。
+
+约束**只对脚本来源生效**——远程按键（`source == 1`）和暂停释放（`source == 2`）
+不受影响。这是设计意图：真人按键不该被 OM 限制，暂停释放必须立即执行。
+
 **验证工具**：
 - `experiments/send_log_analyzer`——多模值均匀性分析
 - `src/stubs/fake_scene_capture.cpp` + `src/stubs/fake_scene_policy.cpp`——无硬件可复现的测试场景
 - `scripts/prepare_fake_scene_dir.ps1`——测试目录组装
 
 **未做**：
-- 最小间隔约束（OM 强制"同键两次动作至少 T ms"）——独立任务
 - 真人分布采样（用真实人类按键数据替换 uniform）——需要先采集真人按键数据，另行设计
 
 ## 二、架构
