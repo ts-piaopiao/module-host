@@ -300,6 +300,18 @@ void Recorder::RecordHuman(uint64_t frame, const core_action& a) {
     impl_->Enqueue(std::move(j));
 }
 
+void Recorder::RecordSend(uint64_t src, const core_action& a) {
+    json j;
+    j["t"] = GetTickCount64();
+    j["type"] = "snd";
+    j["src"] = src;
+    j["kind"] = a.kind;
+    j["a"] = a.a;
+    j["b"] = a.b;
+    j["c"] = a.c;
+    impl_->Enqueue(std::move(j));
+}
+
 void Recorder::RecordError(const char* msg) {
     json j;
     j["t"] = GetTickCount64();

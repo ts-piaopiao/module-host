@@ -339,6 +339,9 @@ int main(int argc, char* argv[]) {
     }
 
     OutputManager output_manager;
+    if (recorder) {
+        output_manager.SetSendSink(recorder.get());
+    }
     if (!output_manager.Start(raw_config)) {
         LogPrintf("[错误] 串口打开失败\n");
         return 1;

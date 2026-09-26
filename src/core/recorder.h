@@ -25,6 +25,9 @@ public:
                         float me_fx, float me_fy,
                         const core_decision* dec);
     void RecordHuman(uint64_t frame, const core_action& a);
+    // 记录实际发送到串口的动作（发送线程调用，时刻精确，不受帧循环影响）。
+    // src: 0=script 1=remote 2=pause（SetScriptPaused 触发的释放）
+    void RecordSend(uint64_t src, const core_action& a);
     void RecordError(const char* msg);
 
 private:
