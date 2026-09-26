@@ -43,10 +43,11 @@ bool ParseInt(const std::string& text, int* out) {
 }
 
 void ParseConfig(const std::string& config, std::string* port, DWORD* baud,
-                 int* min_hold_ms, int* min_gap_ms) {
+                 int* min_hold_min_ms, int* min_hold_max_ms, int* min_gap_ms) {
     port->assign("COM6");
     *baud = 115200;
-    *min_hold_ms = 50;
+    *min_hold_min_ms = 70;
+    *min_hold_max_ms = 90;
     *min_gap_ms = 30;
     if (config.empty()) {
         return;
@@ -79,9 +80,13 @@ void ParseConfig(const std::string& config, std::string* port, DWORD* baud,
             if (ParseInt(value, &num) && num > 0) {
                 *baud = static_cast<DWORD>(num);
             }
-        } else if (key == "output_min_hold_ms") {
+        } else if (key == "output_min_hold_min_ms") {
             if (ParseInt(value, &num) && num >= 0) {
-                *min_hold_ms = num;
+                *min_hold_min_ms = num;
+            }
+        } else if (key == "output_min_hold_max_ms") {
+            if (ParseInt(value, &num) && num >= 0) {
+                *min_hold_max_ms = num;
             }
         } else if (key == "output_min_gap_ms") {
             if (ParseInt(value, &num) && num >= 0) {
@@ -298,7 +303,8 @@ struct OutputManager::Impl {
     int consecutive_failures = 0;
     HANDLE h_timer = nullptr;
     std::mt19937 rng;
-    int min_hold_ms = 50;                       // press 到 release 至少
+    int min_hold_min_ms = 70;
+    int min_hold_max_ms = 90;
     int min_gap_ms = 30;                        // 同键两次 press 至少
     std::map<int32_t, uint64_t> last_press_us;  // 键 -> 上次实际发送 press 的微秒时刻
     std::map<int32_t, uint64_t> last_release_us;
@@ -319,7 +325,7 @@ bool OutputManager::Start(const std::string& config) {
     if (impl_->started) return true;
 
     ParseConfig(config, &impl_->port_name, &impl_->baud_rate,
-                &impl_->min_hold_ms, &impl_->min_gap_ms);
+                &impl_->min_hold_min_ms, &impl_->min_hold_max_ms, &impl_->min_gap_ms);
 
     if (impl_->port_name == "none") {
         impl_->mock_mode = true;
@@ -379,10 +385,16 @@ bool OutputManager::Start(const std::string& config) {
                 const int32_t vk = item.act.a;
                 const uint64_t now_us = NowUs();
                 uint64_t earliest_us = 0;
+                int hold_sample_ms = impl_->min_hold_min_ms;
+                if (impl_->min_hold_max_ms > impl_->min_hold_min_ms) {
+                    std::uniform_int_distribution<int> hd(
+                        impl_->min_hold_min_ms, impl_->min_hold_max_ms);
+                    hold_sample_ms = hd(impl_->rng);
+                }
                 if (item.act.b == 1) {  // press
                     auto it_r = impl_->last_release_us.find(vk);
                     if (it_r != impl_->last_release_us.end()) {
-                        uint64_t cand = it_r->second + static_cast<uint64_t>(impl_->min_hold_ms) * 1000ULL;
+                        uint64_t cand = it_r->second + static_cast<uint64_t>(hold_sample_ms) * 1000ULL;
                         if (cand > earliest_us) earliest_us = cand;
                     }
                     auto it_p = impl_->last_press_us.find(vk);
@@ -393,7 +405,7 @@ bool OutputManager::Start(const std::string& config) {
                 } else if (item.act.b == 0) {  // release
                     auto it_p = impl_->last_press_us.find(vk);
                     if (it_p != impl_->last_press_us.end()) {
-                        uint64_t cand = it_p->second + static_cast<uint64_t>(impl_->min_hold_ms) * 1000ULL;
+                        uint64_t cand = it_p->second + static_cast<uint64_t>(hold_sample_ms) * 1000ULL;
                         if (cand > earliest_us) earliest_us = cand;
                     }
                 }
