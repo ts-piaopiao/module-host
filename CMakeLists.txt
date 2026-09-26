@@ -53,6 +53,15 @@ set_target_properties(fake_scene_policy PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_fake_scene
 )
 
+add_library(fake_scene_attack_policy SHARED src/stubs/fake_scene_attack_policy.cpp)
+target_compile_definitions(fake_scene_attack_policy PRIVATE CORE_BUILDING_PLUGIN)
+target_include_directories(fake_scene_attack_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(fake_scene_attack_policy PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+set_target_properties(fake_scene_attack_policy PROPERTIES
+    OUTPUT_NAME policy_plugin
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_fake_scene_attack
+)
+
 add_library(fake_scene_capture SHARED src/stubs/fake_scene_capture.cpp)
 target_compile_definitions(fake_scene_capture PRIVATE CORE_BUILDING_PLUGIN)
 target_include_directories(fake_scene_capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
