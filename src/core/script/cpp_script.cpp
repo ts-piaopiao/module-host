@@ -580,10 +580,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                             impl_->e_pressed = true;
                             impl_->current_e_tap_ms = SampleEHoldMs(impl_->rng);
                             // 技能动作内随机时刻松方向键（模拟人类攻击时手离方向键）
-                            if (impl_->active_dir_key != 0) {
-                                std::uniform_int_distribution<int> dist(0, impl_->current_e_tap_ms);
-                                impl_->pending_dir_release_ms = now + static_cast<uint64_t>(dist(impl_->rng));
-                            }
+    if (impl_->active_dir_key != 0) {
+        // E 按下后 300~800ms 内随机抬起方向键（攻击僵直期间按住无影响）
+        std::uniform_int_distribution<int> dist(300, 800);
+        impl_->pending_dir_release_ms = now + static_cast<uint64_t>(dist(impl_->rng));
+    }
                             std::printf("[script] E 按下时长: %d ms\n",
                                         impl_->current_e_tap_ms);
                             std::fflush(stdout);
@@ -747,11 +748,21 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 
         case Impl::State::CHASE: {
             const float abs_dx = std::fabs(dx_target);
-            // 滞回：正在走用宽松阈值（0.015），停止中用严格阈值（0.030）
-            // ——避免 dx_target 在 0.02 附近抖动时反复启停
+
+            // 带内判定（前带或后带）——怪在攻击带内不需要移动
+            const bool in_band_any =
+                IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
+                         impl_->target.h, impl_->target.w, impl_->facing)
+                || IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
+                         impl_->target.h, impl_->target.w, -impl_->facing);
+
+            // 滞回：
+            //   正在按方向键（active_dir_key != 0）→ 怪在带内立即松
+            //   没按 → 怪超出 0.16 才重新追（滞回区 0.1458~0.16 保持不追）
             const bool need_move = (impl_->active_dir_key != 0)
-                ? (abs_dx >= 0.015f)
-                : (abs_dx >= 0.030f);
+                ? (!in_band_any)
+                : (abs_dx >= 0.16f);
+
             const int want_dir = need_move ? ((dx_target > 0) ? 0x27 : 0x25) : 0;
             desired_dir = want_dir;
             desired_e = false;
