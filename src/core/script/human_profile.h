@@ -28,11 +28,10 @@ constexpr int kEHoldProfileSize = 8;
 // 用途：约束脚本方向键"最短按住"，消除 <250ms 的碎步；
 // 追击到达攻击带时若已过此下限则正常松手——不影响长按追击。
 constexpr int64_t kDirHoldProfile[][2] = {
-    {  0, 250000},   // 250ms
-    { 25, 400000},   // 400ms
-    { 50, 600000},   // 600ms
-    {100, 1000000},  // 1000ms
+    {  0, 300000},   // 300ms
+    { 50, 400000},   // 400ms
+    {100, 500000},   // 500ms
 };
-constexpr int kDirHoldProfileSize = 4;
+constexpr int kDirHoldProfileSize = 3;
 
 #endif  // MODULE_HOST_HUMAN_PROFILE_H

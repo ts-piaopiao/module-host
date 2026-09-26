@@ -376,6 +376,7 @@ struct CppScript::Impl {
     uint64_t dir_press_start_ms = 0;   // 当前方向键按住起点；0 = 未按住
     uint64_t dir_min_hold_ms = 0;      // 本次按住目标时长；按开始时从方向键分位表采样
     int active_dir_key = 0;   // 当前实际按住的方向键（0 / 0x25 / 0x27）
+    uint64_t pending_dir_release_ms = 0;  // 计划松方向键的时刻；0=无计划
 
     // 转身攻击
     int turn_phase = 0;
@@ -547,6 +548,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             impl_->turn_e_pressed = false;
             impl_->pending_attack = false;
             impl_->pending_chase = false;
+            impl_->pending_dir_release_ms = 0;
         }
     } else {
         const bool in_band = IsInBand(impl_->target, impl_->me, impl_->facing);
@@ -578,6 +580,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                             impl_->attack_start_ms = now;
                             impl_->e_pressed = true;
                             impl_->current_e_tap_ms = SampleEHoldMs(impl_->rng);
+                            // 技能动作内随机时刻松方向键（模拟人类攻击时手离方向键）
+                            if (impl_->active_dir_key != 0) {
+                                std::uniform_int_distribution<int> dist(0, impl_->current_e_tap_ms);
+                                impl_->pending_dir_release_ms = now + static_cast<uint64_t>(dist(impl_->rng));
+                            }
                             std::printf("[script] E 按下时长: %d ms\n",
                                         impl_->current_e_tap_ms);
                             std::fflush(stdout);
@@ -790,6 +797,12 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 desired_dir = impl_->active_dir_key;
             }
         }
+    }
+
+    // 强制松方向键：进 ATTACK 后到达随机松手时刻 → 无论最短按住是否满足都松
+    if (impl_->pending_dir_release_ms != 0 && now >= impl_->pending_dir_release_ms) {
+        desired_dir = 0;
+        impl_->pending_dir_release_ms = 0;
     }
 
     // 更新计时：按键变化时重置或清空

@@ -308,6 +308,7 @@ struct OutputManager::Impl {
     int min_gap_ms = 30;                        // 同键两次 press 至少
     std::map<int32_t, uint64_t> last_press_us;  // 键 -> 上次实际发送 press 的微秒时刻
     std::map<int32_t, uint64_t> last_release_us;
+    uint64_t global_last_release_us = 0;        // 最近一次任意键 release 的微秒时刻
     Recorder* send_sink = nullptr;
     uint64_t script_batch_counter = 0;
     uint64_t last_sent_script_batch_id = 0;
@@ -402,6 +403,12 @@ bool OutputManager::Start(const std::string& config) {
                         uint64_t cand = it_p->second + static_cast<uint64_t>(impl_->min_gap_ms) * 1000ULL;
                         if (cand > earliest_us) earliest_us = cand;
                     }
+                    // 全局约束：任意键 release → 本 press 至少 hold_sample_ms 微秒
+                    if (impl_->global_last_release_us != 0) {
+                        uint64_t cand = impl_->global_last_release_us
+                                        + static_cast<uint64_t>(hold_sample_ms) * 1000ULL;
+                        if (cand > earliest_us) earliest_us = cand;
+                    }
                 } else if (item.act.b == 0) {  // release
                     auto it_p = impl_->last_press_us.find(vk);
                     if (it_p != impl_->last_press_us.end()) {
@@ -421,6 +428,7 @@ bool OutputManager::Start(const std::string& config) {
                     impl_->last_press_us[item.act.a] = t_us;
                 } else if (item.act.b == 0) {
                     impl_->last_release_us[item.act.a] = t_us;
+                    impl_->global_last_release_us = t_us;
                 }
             }
 
@@ -567,6 +575,7 @@ void OutputManager::SetScriptPaused(bool paused) {
         impl_->script_intent_keys.clear();
         impl_->last_press_us.clear();
         impl_->last_release_us.clear();
+        impl_->global_last_release_us = 0;
         impl_->cv.notify_one();
     }
 }
