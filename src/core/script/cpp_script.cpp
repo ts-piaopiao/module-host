@@ -550,7 +550,9 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             impl_->pending_dir_release_ms = 0;
         }
     } else {
-        const bool in_band = IsInBand(impl_->target, impl_->me, impl_->facing);
+        // 前带（facing 方向）和后带（反方向）分别判定
+        const bool in_band_front = IsInBand(impl_->target, impl_->me, impl_->facing);
+        const bool in_band_back  = IsInBand(impl_->target, impl_->me, -impl_->facing);
         const float dx_target = impl_->target.cx - impl_->me.fx;
         const int target_dir = (dx_target > 0) ? 1 : -1;
         const bool is_front = (target_dir == impl_->facing);
@@ -574,7 +576,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         static_cast<uint64_t>(impl_->pending_attack_delay_ms)) {
                         impl_->pending_attack = false;
                         // 延迟到点，重新检查
-                        if (in_band && is_front && fresh_target) {
+                        if (in_band_front && is_front && fresh_target) {
                             impl_->state = Impl::State::ATTACK;
                             impl_->attack_start_ms = now;
                             impl_->e_pressed = true;
@@ -592,7 +594,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     }
                 }
                 // 背面进带：S7 逻辑（转身）
-                else if (in_band && !is_front && fresh_target) {
+                else if (in_band_back && !is_front && fresh_target) {
                     // 技能冷却检查：与正面进带同样对待。
                     // 若上次 E release 距"预计实际按 E"（now + bounce + turn_press_delay 下限）还不到
                     // kSkillCooldownMs，则不进入 ATTACK_TURN，留在 CHASE 等冷却。
@@ -639,7 +641,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     // 冷却未到或 bounce 未过：留在 CHASE，下一帧再试
                 }
                 // 正面进带：设 pending (S8)；先检查技能冷却
-                else if (in_band && is_front && fresh_target) {
+                else if (in_band_front && is_front && fresh_target) {
                     // 技能冷却硬下限检查：上次 E release 到"实际按 E"（now + pending_delay）
                     // 必须 ≥ 810ms。用 pending_delay 下限做保守检查。
                     const bool cooldown_ok =
@@ -749,19 +751,15 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         case Impl::State::CHASE: {
             const float abs_dx = std::fabs(dx_target);
 
-            // 带内判定（前带或后带）——怪在攻击带内不需要移动
+            // 带内判定（前带或后带）
             const bool in_band_any =
                 IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
                          impl_->target.h, impl_->target.w, impl_->facing)
                 || IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
                          impl_->target.h, impl_->target.w, -impl_->facing);
 
-            // 滞回：
-            //   正在按方向键（active_dir_key != 0）→ 怪在带内立即松
-            //   没按 → 怪超出 0.16 才重新追（滞回区 0.1458~0.16 保持不追）
-            const bool need_move = (impl_->active_dir_key != 0)
-                ? (!in_band_any)
-                : (abs_dx >= 0.16f);
+            // 带内不追、带外追——用 IsInBand 判定两方向，无中间地带。
+            const bool need_move = !in_band_any;
 
             const int want_dir = need_move ? ((dx_target > 0) ? 0x27 : 0x25) : 0;
             desired_dir = want_dir;
@@ -805,6 +803,18 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             if (!held_long_enough && !target_behind) {
                 desired_dir = impl_->active_dir_key;
             }
+        }
+    }
+
+    // 进带 → 强制松方向键（不受最短按住约束，这是"到达"不是"抖动"）
+    if (impl_->state == Impl::State::CHASE) {
+        const bool in_band_any2 =
+            IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
+                     impl_->target.h, impl_->target.w, impl_->facing)
+            || IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
+                     impl_->target.h, impl_->target.w, -impl_->facing);
+        if (in_band_any2) {
+            desired_dir = 0;
         }
     }
 
