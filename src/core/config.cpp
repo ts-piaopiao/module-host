@@ -168,6 +168,13 @@ bool LoadConfigFile(const std::string& path, CoreConfig* out, std::string* err) 
             }
             config.decider_dry_run = decider_dry_run;
             config.has_decider_dry_run = true;
+        } else if (key == "script_enabled") {
+            int script_enabled = 1;
+            if (!ParseIntStrict(value, &script_enabled, err, "script_enabled")) {
+                return false;
+            }
+            config.has_script_enabled = true;
+            config.script_enabled = (script_enabled != 0);
         } else if (key.rfind("capture_", 0) == 0 ||
                    key.rfind("policy_", 0) == 0 ||
                    key.rfind("input_", 0) == 0 ||

@@ -397,10 +397,16 @@ int main(int argc, char* argv[]) {
     core_decision decision_policy = {};
     core_detections detections = {};
     ScriptHost script_host;
-    if (!script_host.Start(raw_config)) {
-        LogPrintf("[错误] 脚本启动失败\n");
-        Cleanup(states, kDllCount);
-        return 1;
+    const bool script_on = (!config.has_script_enabled) || config.script_enabled;
+    if (script_on) {
+        if (!script_host.Start(raw_config)) {
+            LogPrintf("[错误] 脚本启动失败\n");
+            Cleanup(states, kDllCount);
+            return 1;
+        }
+        LogPrintf("[内核] 脚本已启用\n");
+    } else {
+        LogPrintf("[内核] 脚本已禁用 (script_enabled=0)\n");
     }
 
     // 远程输出直通 OutputManager
@@ -452,14 +458,19 @@ int main(int argc, char* argv[]) {
         const bool me_valid = script_host.GetMeLock(&me_fx, &me_fy);
 
         core_decision decision_decided = {};
-        script_host.OnFrame(static_cast<uint64_t>(frame_index), GetTickCount64(),
-                            me_valid, me_fx, me_fy, &detections);
-        script_host.GetDecision(&decision_decided);
 
-        if (recorder) {
-            recorder->RecordDecision(static_cast<uint64_t>(frame_index),
-                                     me_valid, me_fx, me_fy,
-                                     &decision_decided);
+        if (script_on) {
+            script_host.OnFrame(static_cast<uint64_t>(frame_index), GetTickCount64(),
+                                me_valid, me_fx, me_fy, &detections);
+            script_host.GetDecision(&decision_decided);
+
+            if (recorder) {
+                recorder->RecordDecision(static_cast<uint64_t>(frame_index),
+                                         me_valid, me_fx, me_fy,
+                                         &decision_decided);
+            }
+
+            output_manager.SendScript(&decision_decided);
         }
 
         // 人类事件只用于 recorder 记录（不回灌到 decision）
@@ -474,9 +485,6 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // 脚本决策直接走 SendScript（human 走 SendAsync，两条独立路径）
-        output_manager.SendScript(&decision_decided);
-
         if (decision_decided.out_count == 0) {
             LogPrintf("[内核] 无意图\n");
         }
@@ -487,7 +495,9 @@ int main(int argc, char* argv[]) {
     } else {
         LogPrintf("[内核] 无限模式结束\n");
     }
-    script_host.Stop();
+    if (script_on) {
+        script_host.Stop();
+    }
     output_manager.Stop();
     Cleanup(states, kDllCount);
     return 0;

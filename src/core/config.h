@@ -12,6 +12,8 @@ struct CoreConfig {
     int decider_dry_run = 0;
     bool has_plugins_dir = false;
     bool has_frames = false;
+    bool has_script_enabled = false;
+    bool script_enabled = true;   // 默认启用脚本
     bool has_log_path = false;
     bool has_remote_port = false;
     bool has_remote_jpeg_quality = false;
