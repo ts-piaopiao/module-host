@@ -298,8 +298,10 @@ struct CombatConfig {
 };
 
 struct CppScript::Impl {
-    // 冰雷冰冻术技能延迟 810ms + 60ms 容错（帧率 33ms / 串口 ~10ms / 状态转换开销）
-    static constexpr uint64_t kRecoveryMs = 870;
+    // RECOVERY 时长（攻击后回到 CHASE 的过渡）。技能冷却不再由它承担。
+    static constexpr uint64_t kRecoveryMs = 300;
+    // 技能冷却硬下限：冰冻术 810ms。CHASE 进 ATTACK 前检查。
+    static constexpr uint64_t kSkillCooldownMs = 810;
     static constexpr int kTurnPressDelayMinMs = 100;
     static constexpr int kTurnPressDelayMaxMs = 200;
     static constexpr int kTurnKeyReleaseDelayMs = 100;
@@ -316,6 +318,7 @@ struct CppScript::Impl {
 
     uint64_t attack_start_ms = 0;
     uint64_t recovery_start_ms = 0;
+    uint64_t last_attack_release_ms = 0;   // 上次 E 释放时刻；用于独立技能冷却检查
     bool e_pressed = false;
     int current_e_tap_ms = 150;   // 初始值；实际每次攻击前重新采样
 
@@ -550,18 +553,28 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         impl_->turn_e_pressed = false;
                     }
                 }
-                // 正面进带：设 pending (S8)
+                // 正面进带：设 pending (S8)；先检查技能冷却
                 else if (in_band && is_front && fresh_target) {
-                    impl_->pending_attack = true;
-                    impl_->pending_attack_start_ms = now;
-                    {
-                        std::uniform_int_distribution<int> dist(
-                            impl_->cfg.attack_react_min_ms, impl_->cfg.attack_react_max_ms);
-                        impl_->pending_attack_delay_ms = dist(impl_->rng);
+                    // 技能冷却硬下限检查：上次 E release 到"实际按 E"（now + pending_delay）
+                    // 必须 ≥ 810ms。用 pending_delay 下限做保守检查。
+                    const bool cooldown_ok =
+                        (impl_->last_attack_release_ms == 0) ||
+                        ((now - impl_->last_attack_release_ms) +
+                            static_cast<uint64_t>(impl_->cfg.attack_react_min_ms)
+                                >= Impl::kSkillCooldownMs);
+                    if (cooldown_ok) {
+                        impl_->pending_attack = true;
+                        impl_->pending_attack_start_ms = now;
+                        {
+                            std::uniform_int_distribution<int> dist(
+                                impl_->cfg.attack_react_min_ms, impl_->cfg.attack_react_max_ms);
+                            impl_->pending_attack_delay_ms = dist(impl_->rng);
+                        }
+                        std::printf("[script] 攻击反应延迟: %d ms\n",
+                                    impl_->pending_attack_delay_ms);
+                        std::fflush(stdout);
                     }
-                    std::printf("[script] 攻击反应延迟: %d ms\n",
-                                impl_->pending_attack_delay_ms);
-                    std::fflush(stdout);
+                    // 冷却未到：不设 pending，继续 CHASE，下一帧再试
                 }
                 break;
 
@@ -575,6 +588,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 if (now - impl_->attack_start_ms >=
                     static_cast<uint64_t>(impl_->current_e_tap_ms)) {
                     impl_->e_pressed = false;
+                    impl_->last_attack_release_ms = now;
                     impl_->state = Impl::State::RECOVERY;
                     impl_->recovery_start_ms = now;
                 }
@@ -610,6 +624,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 } else if (impl_->turn_phase == 3) {
                     impl_->turn_key_pressed = false;
                     impl_->turn_e_pressed = false;
+                    impl_->last_attack_release_ms = now;
                     impl_->state = Impl::State::RECOVERY;
                     impl_->recovery_start_ms = now;
                 }
