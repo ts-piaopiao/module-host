@@ -232,19 +232,20 @@ struct CombatConfig {
     int e_rare_hi_min_ms = 190;
     int e_rare_hi_max_ms = 300;
 
-    // CHASE → ATTACK 延迟
-    int attack_react_min_ms = 80;
-    int attack_react_max_ms = 200;
+    // CHASE → ATTACK 延迟：脚本快速反应（不是真人犹豫）
+    int attack_react_min_ms = 40;
+    int attack_react_max_ms = 70;
 
-    // RECOVERY → CHASE 延迟
+    // RECOVERY → CHASE 延迟：脚本快速反应
     int recovery_chase_min_ms = 30;
-    int recovery_chase_max_ms = 100;
+    int recovery_chase_max_ms = 60;
 };
 
 struct CppScript::Impl {
     static constexpr int kETapMsMin = 150;
     static constexpr int kETapMsMax = 300;
-    static constexpr uint64_t kRecoveryMs = 850;
+    // 冰雷冰冻术技能延迟 810ms + 60ms 容错（帧率 33ms / 串口 ~10ms / 状态转换开销）
+    static constexpr uint64_t kRecoveryMs = 870;
     static constexpr int kTurnPressDelayMinMs = 100;
     static constexpr int kTurnPressDelayMaxMs = 200;
     static constexpr int kTurnKeyReleaseDelayMs = 100;
