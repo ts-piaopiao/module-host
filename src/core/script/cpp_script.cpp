@@ -352,7 +352,6 @@ struct CppScript::Impl {
     static constexpr uint64_t kSkillCooldownMs = 810;
     static constexpr int kTurnPressDelayMinMs = 100;
     static constexpr int kTurnPressDelayMaxMs = 200;
-    static constexpr int kTurnKeyReleaseDelayMs = 100;
     static constexpr uint64_t kTurnBounceMs = 200;
 
     uint64_t last_log_frame = 0;
@@ -378,12 +377,12 @@ struct CppScript::Impl {
     int active_dir_key = 0;   // 当前实际按住的方向键（0 / 0x25 / 0x27）
     uint64_t pending_dir_release_ms = 0;  // 计划松方向键的时刻；0=无计划
 
-    // 转身攻击
-    int turn_phase = 0;
-    uint64_t turn_phase_start_ms = 0;
+    // 转身攻击（并行倒计时）
+    uint64_t turn_start_ms = 0;
+    uint64_t turn_dir_release_ms = 0;   // 方向键松开时刻
+    uint64_t turn_e_press_ms = 0;       // E 按下时刻
+    uint64_t turn_e_release_ms = 0;     // E 释放时刻
     int turn_dir_key = 0;
-    int turn_press_delay_ms = 0;
-    int turn_e_tap_ms = 0;
     bool turn_key_pressed = false;
     bool turn_e_pressed = false;
 
@@ -605,19 +604,36 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                                 >= Impl::kSkillCooldownMs);
                     if (cooldown_ok_turn && now - impl_->last_dir_ms >= Impl::kTurnBounceMs) {
                         impl_->state = Impl::State::ATTACK_TURN;
-                        impl_->turn_phase = 0;
-                        impl_->turn_phase_start_ms = now;
+                        impl_->turn_start_ms = now;
                         impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
-                        impl_->facing = target_dir;                // 新增：与 turn_dir_key 同帧同步 facing
-                        impl_->last_dir_ms = now;                  // 新增：与 CHASE 内转向一致，重置冷却计时
-                        {
-                            std::uniform_int_distribution<int> dist(
-                                Impl::kTurnPressDelayMinMs, Impl::kTurnPressDelayMaxMs);
-                            impl_->turn_press_delay_ms = dist(impl_->rng);
-                        }
-                        impl_->turn_e_tap_ms = SampleEHoldMs(impl_->rng);
-                        impl_->turn_key_pressed = false;
+                        impl_->facing = target_dir;
+                        impl_->last_dir_ms = now;
+                        impl_->turn_key_pressed = true;
                         impl_->turn_e_pressed = false;
+
+                        // 采样 E 时长
+                        impl_->current_e_tap_ms = SampleEHoldMs(impl_->rng);
+
+                        // E 按下时刻 = now + [100, 200]
+                        {
+                            std::uniform_int_distribution<int> ep(
+                                Impl::kTurnPressDelayMinMs, Impl::kTurnPressDelayMaxMs);
+                            impl_->turn_e_press_ms = now + static_cast<uint64_t>(ep(impl_->rng));
+                        }
+                        impl_->turn_e_release_ms = impl_->turn_e_press_ms +
+                            static_cast<uint64_t>(impl_->current_e_tap_ms);
+
+                        // 方向键松开时刻 = now + [dir_min_hold, 800]
+                        uint64_t dir_min_hold_ms = 300;
+                        {
+                            const int64_t us = SampleFromProfile(
+                                kDirHoldProfile, kDirHoldProfileSize, impl_->rng);
+                            dir_min_hold_ms = static_cast<uint64_t>(us / 1000);
+                        }
+                        {
+                            std::uniform_int_distribution<uint64_t> dd(dir_min_hold_ms, 800);
+                            impl_->turn_dir_release_ms = now + dd(impl_->rng);
+                        }
                     }
                     // 冷却未到或 bounce 未过：留在 CHASE，下一帧再试
                 }
@@ -665,35 +681,21 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             }
 
             case Impl::State::ATTACK_TURN: {
-                if (impl_->turn_phase == 0) {
-                    if (!impl_->turn_key_pressed) {
-                        impl_->turn_key_pressed = true;
-                        impl_->facing = target_dir;
-                        impl_->last_dir_ms = now;
-                    }
-                    if (now - impl_->turn_phase_start_ms >=
-                        static_cast<uint64_t>(impl_->turn_press_delay_ms)) {
-                        impl_->turn_phase = 1;
-                        impl_->turn_phase_start_ms = now;
-                    }
-                } else if (impl_->turn_phase == 1) {
-                    if (!impl_->turn_e_pressed) {
-                        impl_->turn_e_pressed = true;
-                    }
-                    if (now - impl_->turn_phase_start_ms >=
-                        static_cast<uint64_t>(impl_->turn_e_tap_ms)) {
-                        impl_->turn_phase = 2;
-                        impl_->turn_phase_start_ms = now;
-                    }
-                } else if (impl_->turn_phase == 2) {
-                    if (now - impl_->turn_phase_start_ms >=
-                        Impl::kTurnKeyReleaseDelayMs) {
-                        impl_->turn_phase = 3;
-                    }
-                } else if (impl_->turn_phase == 3) {
-                    impl_->turn_key_pressed = false;
+                // E 按下
+                if (!impl_->turn_e_pressed && now >= impl_->turn_e_press_ms) {
+                    impl_->turn_e_pressed = true;
+                }
+                // E 释放
+                if (impl_->turn_e_pressed && now >= impl_->turn_e_release_ms) {
                     impl_->turn_e_pressed = false;
                     impl_->last_attack_release_ms = now;
+                }
+                // 方向键释放
+                if (impl_->turn_key_pressed && now >= impl_->turn_dir_release_ms) {
+                    impl_->turn_key_pressed = false;
+                }
+                // 两者都完成 → RECOVERY
+                if (!impl_->turn_key_pressed && !impl_->turn_e_pressed) {
                     impl_->state = Impl::State::RECOVERY;
                     impl_->recovery_start_ms = now;
                 }
@@ -762,12 +764,8 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             break;
 
         case Impl::State::ATTACK_TURN: {
-            if (impl_->turn_phase <= 2) {
-                desired_dir = impl_->turn_dir_key;
-            } else {
-                desired_dir = 0;
-            }
-            desired_e = (impl_->turn_phase == 1 || impl_->turn_phase == 2);
+            desired_dir = impl_->turn_key_pressed ? impl_->turn_dir_key : 0;
+            desired_e = impl_->turn_e_pressed;
             break;
         }
 
