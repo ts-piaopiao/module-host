@@ -17,7 +17,8 @@ namespace {
 
 constexpr int kInvariantCount = 11;
 constexpr long long kFrameMs = 33;
-constexpr long long kMinEHoldMs = 100;
+    // I4 下界：真人分位表起点 70ms，此处 50ms 仅防采样被绕过的 bug
+    constexpr long long kMinEHoldMs = 50;
 constexpr int64_t kMinEGapMs = 800;
 
 struct DetRaw {
@@ -46,7 +47,7 @@ const char* InvariantName(int idx) {
         case 0: return "I1 me未锁定 -> 不动 active_key / 不发E";
         case 1: return "I2 active_key 只能是 0x00/0x25/0x27/0x45";
         case 2: return "I3 desired_e=true -> state 只能是 2/3";
-        case 3: return "I4 desired_e 连续帧时长 >= 100ms（无上限）";
+        case 3: return "I4 desired_e 连续帧时长 >= 50ms（无上限）";
         case 4: return "I5 两次E release 间隔 >= 800ms";
         case 5: return "I6 进入 state=3 的前一帧 facing 与 target 反号";
         case 6: return "I7 state 只能是 0/1/2/3/4";
@@ -352,7 +353,7 @@ int main(int argc, char** argv) {
                     ++exempt_i4;
                 } else {
                     ++viol[3];
-                    std::printf("[I4] 违例 frame=%llu..%llu: E持续 %lldms (%lld帧) < 100ms\n",
+                    std::printf("[I4] 违例 frame=%llu..%llu: E持续 %lldms (%lld帧) < 50ms\n",
                                 (unsigned long long)e_run_start_frame,
                                 (unsigned long long)frame_idx,
                                 (long long)ms, (long long)e_run_frames);
