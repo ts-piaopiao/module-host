@@ -315,7 +315,8 @@ struct CppScript::Impl {
     static constexpr int kTurnPressDelayMaxMs = 200;
     static constexpr int kTurnKeyReleaseDelayMs = 100;
     static constexpr uint64_t kTurnBounceMs = 200;
-    static constexpr uint64_t kChaseTurnCooldownMs = 300;
+    static constexpr uint64_t kMinDirHoldMinMs = 200;
+    static constexpr uint64_t kMinDirHoldMaxMs = 500;
 
     uint64_t last_log_frame = 0;
     bool inited = false;
@@ -334,6 +335,9 @@ struct CppScript::Impl {
     // 朝向
     int facing = 1;
     uint64_t last_dir_ms = 0;
+    uint64_t dir_press_start_ms = 0;   // 当前方向键按住起点；0 = 未按住
+    uint64_t dir_min_hold_ms = 0;      // 本次按住目标时长（200-500 随机）；按开始时采样
+    int active_dir_key = 0;   // 当前实际按住的方向键（0 / 0x25 / 0x27）
 
     // 转身攻击
     int turn_phase = 0;
@@ -707,6 +711,13 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     const float dx_target = impl_->target.cx - impl_->me.fx;
     const int target_dir = (dx_target > 0) ? 1 : -1;
 
+    // 非 CHASE 状态：清按住计时，保证下次进 CHASE 从头采样
+    if (impl_->state != Impl::State::CHASE) {
+        impl_->dir_press_start_ms = 0;
+        impl_->dir_min_hold_ms = 0;
+        impl_->active_dir_key = 0;
+    }
+
     switch (impl_->state) {
         case Impl::State::IDLE:
             desired_dir = 0;
@@ -715,23 +726,52 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 
         case Impl::State::CHASE: {
             const float abs_dx = std::fabs(dx_target);
-            if (abs_dx < 0.02f) {
-                desired_dir = 0;
-            } else {
-                const int want_dir = (dx_target > 0) ? 0x27 : 0x25;
-                const int want_facing = (dx_target > 0) ? 1 : -1;
-                if (want_facing != impl_->facing) {
-                    if (now - impl_->last_dir_ms < Impl::kChaseTurnCooldownMs) {
-                        desired_dir = (impl_->facing > 0) ? 0x27 : 0x25;
-                    } else {
-                        desired_dir = (dx_target > 0) ? 0x27 : 0x25;
-                        impl_->facing = (dx_target > 0) ? 1 : -1;
-                        impl_->last_dir_ms = now;
-                    }
-                } else {
-                    desired_dir = (dx_target > 0) ? 0x27 : 0x25;
+            const bool need_move = (abs_dx >= 0.02f);
+
+            // 1. 理想方向：纯由 dx_target 决定，不看 facing
+            const int want_dir = need_move ? ((dx_target > 0) ? 0x27 : 0x25) : 0;
+
+            // 2. 过冲保护：怪在身后 → 允许立即切换
+            const bool target_behind =
+                (impl_->facing > 0 && dx_target < 0) ||
+                (impl_->facing < 0 && dx_target > 0);
+
+            // 3. 最短按住约束：正在按住某个键，想切/松但按得不够久，且怪不在身后 → 保持原键
+            int out_dir = want_dir;
+            if (impl_->active_dir_key != 0 && out_dir != impl_->active_dir_key) {
+                const bool held_long_enough =
+                    (now - impl_->dir_press_start_ms) >= impl_->dir_min_hold_ms;
+                if (!held_long_enough && !target_behind) {
+                    out_dir = impl_->active_dir_key;
                 }
             }
+
+            // 4. 更新按住计时：按键变化（含换键 / 松手）时重置
+            if (out_dir != impl_->active_dir_key) {
+                if (out_dir != 0) {
+                    impl_->dir_press_start_ms = now;
+                    std::uniform_int_distribution<uint64_t> dist(
+                        Impl::kMinDirHoldMinMs, Impl::kMinDirHoldMaxMs);
+                    impl_->dir_min_hold_ms = dist(impl_->rng);
+                } else {
+                    impl_->dir_press_start_ms = 0;
+                    impl_->dir_min_hold_ms = 0;
+                }
+            }
+
+            // 5. facing 从 out_dir 反推——保证与实际按键一致（I10）
+            const int old_facing = impl_->facing;
+            if (out_dir == 0x27) {
+                impl_->facing = 1;
+            } else if (out_dir == 0x25) {
+                impl_->facing = -1;
+            }
+            if (impl_->facing != old_facing) {
+                impl_->last_dir_ms = now;
+            }
+
+            impl_->active_dir_key = out_dir;
+            desired_dir = out_dir;
             desired_e = false;
             break;
         }
