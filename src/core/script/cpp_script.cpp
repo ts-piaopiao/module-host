@@ -42,6 +42,8 @@ struct TargetLockState {
     float cx = 0.0f;
     float cy = 0.0f;
     float fy = 0.0f;
+    float h = 0.0f;
+    float w = 0.0f;
     bool locked = false;
     float lock_cx = 0.0f;
     float lock_cy = 0.0f;
@@ -134,7 +136,7 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
 
     const uint64_t now = world.now_ms;
 
-    struct Cand { float cx, cy, fy; };
+    struct Cand { float cx, cy, fy, h, w; };
     Cand cands[CORE_MAX_DETECTIONS];
     uint32_t n = 0;
     for (uint32_t i = 0; i < world.dets->count; ++i) {
@@ -146,6 +148,8 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
         cands[n].cx = d.cx;
         cands[n].cy = d.cy;
         cands[n].fy = d.cy + d.h * 0.5f;
+        cands[n].h = d.h;
+        cands[n].w = d.w;
         n++;
     }
 
@@ -165,6 +169,8 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
             t->cx = cands[matched].cx;
             t->cy = cands[matched].cy;
             t->fy = cands[matched].fy;
+            t->h = cands[matched].h;
+            t->w = cands[matched].w;
             t->lost_since = 0;
             t->has = true;
             return;
@@ -197,29 +203,54 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
         t->cx = cands[best].cx;
         t->cy = cands[best].cy;
         t->fy = cands[best].fy;
+        t->h = cands[best].h;
+        t->w = cands[best].w;
         t->lost_since = 0;
         t->has = true;
     }
 }
 
-bool IsInBand(const TargetLockState& t, const MeLockState& me) {
+bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
     if (!t.has || !me.valid) return false;
-    const float dx = std::fabs(t.cx - me.fx);
-    const float dy = t.cy - me.fy;
-    if (dy < kBandYMin || dy > kBandYMax) return false;
+    // X 轴：怪物 bbox 与攻击区 [me.fx, me.fx ± x_max] 相交
+    const float t_left = t.cx - t.w * 0.5f;
+    const float t_right = t.cx + t.w * 0.5f;
     const float x_max = (std::fabs(t.fy - me.fy) < kSamePlatY) ? kBandXMaxSame
                                                                 : kBandXMaxCross;
-    return dx >= kBandXMin && dx <= x_max;
+    const float zone_far = (facing > 0) ? (me.fx + x_max) : (me.fx - x_max);
+    const float zone_lo = (zone_far < me.fx) ? zone_far : me.fx;
+    const float zone_hi = (zone_far < me.fx) ? me.fx : zone_far;
+    if (t_right < zone_lo || t_left > zone_hi) return false;
+
+    // Y 轴：怪物 bbox 与攻击纵向范围相交
+    const float t_top = t.cy - t.h * 0.5f;
+    const float t_bot = t.cy + t.h * 0.5f;
+    const float band_top = me.fy + kBandYMin;
+    const float band_bot = me.fy + kBandYMax;
+    if (t_bot < band_top || t_top > band_bot) return false;
+
+    return true;
 }
 
-bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy, float t_h) {
+bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
+              float t_h, float t_w, int facing) {
     const float t_fy = t_cy + t_h * 0.5f;
-    const float dx = std::fabs(t_cx - me_fx);
-    const float dy = t_cy - me_fy;
-    if (dy < kBandYMin || dy > kBandYMax) return false;
+    const float t_left = t_cx - t_w * 0.5f;
+    const float t_right = t_cx + t_w * 0.5f;
     const float x_max = (std::fabs(t_fy - me_fy) < kSamePlatY) ? kBandXMaxSame
                                                                 : kBandXMaxCross;
-    return dx >= kBandXMin && dx <= x_max;
+    const float zone_far = (facing > 0) ? (me_fx + x_max) : (me_fx - x_max);
+    const float zone_lo = (zone_far < me_fx) ? zone_far : me_fx;
+    const float zone_hi = (zone_far < me_fx) ? me_fx : zone_far;
+    if (t_right < zone_lo || t_left > zone_hi) return false;
+
+    const float t_top = t_cy - t_h * 0.5f;
+    const float t_bot = t_cy + t_h * 0.5f;
+    const float band_top = me_fy + kBandYMin;
+    const float band_bot = me_fy + kBandYMax;
+    if (t_bot < band_top || t_top > band_bot) return false;
+
+    return true;
 }
 
 }  // namespace
@@ -499,7 +530,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             impl_->pending_chase = false;
         }
     } else {
-        const bool in_band = IsInBand(impl_->target, impl_->me);
+        const bool in_band = IsInBand(impl_->target, impl_->me, impl_->facing);
         const float dx_target = impl_->target.cx - impl_->me.fx;
         const int target_dir = (dx_target > 0) ? 1 : -1;
         const bool is_front = (target_dir == impl_->facing);
