@@ -171,7 +171,8 @@ bool LoadConfigFile(const std::string& path, CoreConfig* out, std::string* err) 
         } else if (key.rfind("capture_", 0) == 0 ||
                    key.rfind("policy_", 0) == 0 ||
                    key.rfind("input_", 0) == 0 ||
-                   key.rfind("combat_", 0) == 0) {
+                   key.rfind("combat_", 0) == 0 ||
+                   key.rfind("output_", 0) == 0) {
             continue;
         } else {
             *err = "未知配置项: " + key;

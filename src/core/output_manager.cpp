@@ -7,6 +7,7 @@
 #include <string>
 #include <deque>
 #include <set>
+#include <map>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -41,9 +42,12 @@ bool ParseInt(const std::string& text, int* out) {
     return true;
 }
 
-void ParseConfig(const std::string& config, std::string* port, DWORD* baud) {
+void ParseConfig(const std::string& config, std::string* port, DWORD* baud,
+                 int* min_hold_ms, int* min_gap_ms) {
     port->assign("COM6");
     *baud = 115200;
+    *min_hold_ms = 50;
+    *min_gap_ms = 30;
     if (config.empty()) {
         return;
     }
@@ -74,6 +78,14 @@ void ParseConfig(const std::string& config, std::string* port, DWORD* baud) {
         } else if (key == "input_baud") {
             if (ParseInt(value, &num) && num > 0) {
                 *baud = static_cast<DWORD>(num);
+            }
+        } else if (key == "output_min_hold_ms") {
+            if (ParseInt(value, &num) && num >= 0) {
+                *min_hold_ms = num;
+            }
+        } else if (key == "output_min_gap_ms") {
+            if (ParseInt(value, &num) && num >= 0) {
+                *min_gap_ms = num;
             }
         }
     }
@@ -244,6 +256,19 @@ bool WaitPreciseUs(HANDLE h_timer, uint64_t us) {
     return true;
 }
 
+// 微秒级挂钟（QPC），与 Recorder 的时间戳同源，无 15.6ms 量化。
+uint64_t NowUs() {
+    static LARGE_INTEGER freq = []() {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return static_cast<uint64_t>(
+        (static_cast<double>(now.QuadPart) * 1e6) / static_cast<double>(freq.QuadPart));
+}
+
 }  // namespace
 
 struct QueuedAction {
@@ -273,6 +298,10 @@ struct OutputManager::Impl {
     int consecutive_failures = 0;
     HANDLE h_timer = nullptr;
     std::mt19937 rng;
+    int min_hold_ms = 50;                       // press 到 release 至少
+    int min_gap_ms = 30;                        // 同键两次 press 至少
+    std::map<int32_t, uint64_t> last_press_us;  // 键 -> 上次实际发送 press 的微秒时刻
+    std::map<int32_t, uint64_t> last_release_us;
     Recorder* send_sink = nullptr;
     uint64_t script_batch_counter = 0;
     uint64_t last_sent_script_batch_id = 0;
@@ -289,7 +318,8 @@ bool OutputManager::Start(const std::string& config) {
     std::lock_guard<std::mutex> lk(impl_->mutex);
     if (impl_->started) return true;
 
-    ParseConfig(config, &impl_->port_name, &impl_->baud_rate);
+    ParseConfig(config, &impl_->port_name, &impl_->baud_rate,
+                &impl_->min_hold_ms, &impl_->min_gap_ms);
 
     if (impl_->port_name == "none") {
         impl_->mock_mode = true;
@@ -333,12 +363,8 @@ bool OutputManager::Start(const std::string& config) {
                 sink = impl_->send_sink;
             }
 
-            // 跨批抖动：脚本新批的首个动作前随机延迟 0-33ms。
-            // 同批动作保持零延迟，保护游戏方向切换（release + press 不可被拉开）。
-            // batch_id == 0 的动作（SendAsync / SetScriptPaused 的即时释放）不延迟。
+            // 1. 抖动（脚本新批时）
             if (item.batch_id != 0 && item.batch_id != impl_->last_sent_script_batch_id) {
-                // 高精度抖动：0~33000 微秒（即 0~33ms）均匀分布。
-                // 用 mt19937 而非 rand() —— 质量更好，且为后续切换分布（L3 真人分布）预留。
                 std::uniform_int_distribution<uint32_t> dist(0, 33000);
                 const uint32_t delay_us = dist(impl_->rng);
                 if (delay_us > 0) {
@@ -347,10 +373,51 @@ bool OutputManager::Start(const std::string& config) {
                 impl_->last_sent_script_batch_id = item.batch_id;
             }
 
+            // 2. 最小间隔约束（仅脚本来源，基于 QPC）
+            //    目标：确保本次发送的实际时刻 ≥ 上次同键相关动作 + 最小间隔。
+            if (item.source == 0 && item.act.kind == CORE_ACTION_KEY) {
+                const int32_t vk = item.act.a;
+                const uint64_t now_us = NowUs();
+                uint64_t earliest_us = 0;
+                if (item.act.b == 1) {  // press
+                    auto it_r = impl_->last_release_us.find(vk);
+                    if (it_r != impl_->last_release_us.end()) {
+                        uint64_t cand = it_r->second + static_cast<uint64_t>(impl_->min_hold_ms) * 1000ULL;
+                        if (cand > earliest_us) earliest_us = cand;
+                    }
+                    auto it_p = impl_->last_press_us.find(vk);
+                    if (it_p != impl_->last_press_us.end()) {
+                        uint64_t cand = it_p->second + static_cast<uint64_t>(impl_->min_gap_ms) * 1000ULL;
+                        if (cand > earliest_us) earliest_us = cand;
+                    }
+                } else if (item.act.b == 0) {  // release
+                    auto it_p = impl_->last_press_us.find(vk);
+                    if (it_p != impl_->last_press_us.end()) {
+                        uint64_t cand = it_p->second + static_cast<uint64_t>(impl_->min_hold_ms) * 1000ULL;
+                        if (cand > earliest_us) earliest_us = cand;
+                    }
+                }
+                if (earliest_us > now_us) {
+                    WaitPreciseUs(impl_->h_timer, earliest_us - now_us);
+                }
+            }
+
+            // 3. 记录约束状态（紧接在发送前，记录"实际发送时刻"）
+            if (item.source == 0 && item.act.kind == CORE_ACTION_KEY) {
+                const uint64_t t_us = NowUs();
+                if (item.act.b == 1) {
+                    impl_->last_press_us[item.act.a] = t_us;
+                } else if (item.act.b == 0) {
+                    impl_->last_release_us[item.act.a] = t_us;
+                }
+            }
+
+            // 4. 发送记录
             if (sink != nullptr) {
                 sink->RecordSend(item.source, item.act);
             }
 
+            // 5. 实际发送
             bool ok = TranslateAndSend(impl_->port, item.act, impl_->mock_mode);
             if (!ok) {
                 impl_->consecutive_failures++;
@@ -486,6 +553,8 @@ void OutputManager::SetScriptPaused(bool paused) {
         }
         impl_->script_pressed_keys.clear();
         impl_->script_intent_keys.clear();
+        impl_->last_press_us.clear();
+        impl_->last_release_us.clear();
         impl_->cv.notify_one();
     }
 }
