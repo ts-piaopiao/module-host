@@ -44,6 +44,24 @@ set_target_properties(stage1_stub_policy PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/stubs
 )
 
+add_library(fake_scene_policy SHARED src/stubs/fake_scene_policy.cpp)
+target_compile_definitions(fake_scene_policy PRIVATE CORE_BUILDING_PLUGIN)
+target_include_directories(fake_scene_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(fake_scene_policy PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+set_target_properties(fake_scene_policy PROPERTIES
+    OUTPUT_NAME policy_plugin
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_fake_scene
+)
+
+add_library(fake_scene_capture SHARED src/stubs/fake_scene_capture.cpp)
+target_compile_definitions(fake_scene_capture PRIVATE CORE_BUILDING_PLUGIN)
+target_include_directories(fake_scene_capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(fake_scene_capture PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+set_target_properties(fake_scene_capture PROPERTIES
+    OUTPUT_NAME capture_plugin
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/plugins_fake_scene
+)
+
 add_library(bad_missing_symbol_capture SHARED src/bad_plugins/missing_symbol_capture.cpp)
 target_compile_definitions(bad_missing_symbol_capture PRIVATE CORE_BUILDING_PLUGIN)
 target_include_directories(bad_missing_symbol_capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
