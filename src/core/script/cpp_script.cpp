@@ -18,6 +18,7 @@ constexpr uint64_t kMeRelockMs = 1000;
 constexpr float kTargetMatchX = 0.025f;
 constexpr float kTargetMatchY = 0.037f;
 constexpr uint64_t kTargetLoseMs = 500;
+constexpr uint64_t kTargetSwitchCooldownMs = 500;
 constexpr float kSamePlatY = 0.028f;
 constexpr float kBandXMin = 0.010f;
 // 冰冻术硬范围 300px，缩 20px 留容错 → 280px，归一化 280/1920 = 0.1458
@@ -47,6 +48,7 @@ struct TargetLockState {
     float lock_cx = 0.0f;
     float lock_cy = 0.0f;
     uint64_t lost_since = 0;
+    uint64_t last_target_switch_ms = 0;
 };
 
 void SelectMe(const ScriptWorld& world, MeLockState* m) {
@@ -126,8 +128,11 @@ void SelectMe(const ScriptWorld& world, MeLockState* m) {
     }
 }
 
+bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
+              float t_h, float t_w, int facing);
+
 void SelectTarget(const ScriptWorld& world, const MeLockState& me,
-                  TargetLockState* t) {
+                  int facing, TargetLockState* t) {
     if (world.dets == nullptr || !me.valid) {
         t->has = false;
         return;
@@ -152,31 +157,80 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
         n++;
     }
 
+    // 层级：0=前带（facing 方向攻击带），1=后带（反方向），2=远处
+    auto layer_of = [&](uint32_t i) -> int {
+        if (IsInBand(me.fx, me.fy, cands[i].cx, cands[i].cy,
+                     cands[i].h, cands[i].w, facing)) return 0;
+        if (IsInBand(me.fx, me.fy, cands[i].cx, cands[i].cy,
+                     cands[i].h, cands[i].w, -facing)) return 1;
+        return 2;
+    };
+
+    // 选 candidate：L1 > L2 > L3；同层选最近
+    int cand_idx = -1;
+    int cand_layer = 99;
+    float cand_d = 1e9f;
+    for (uint32_t i = 0; i < n; ++i) {
+        const int layer = layer_of(i);
+        const float d = std::fabs(cands[i].cx - me.lock_fx);
+        if (layer < cand_layer || (layer == cand_layer && d < cand_d)) {
+            cand_layer = layer;
+            cand_d = d;
+            cand_idx = (int)i;
+        }
+    }
+
     if (t->locked) {
-        int matched = -1;
+        // 当前锁定目标在本帧对应的怪（位置匹配）
+        int cur_idx = -1;
         float best_d2 = 1e9f;
         for (uint32_t i = 0; i < n; ++i) {
             const float dx = std::fabs(cands[i].cx - t->lock_cx);
             const float dy = std::fabs(cands[i].cy - t->lock_cy);
             if (dx > kTargetMatchX || dy > kTargetMatchY) continue;
             const float d2 = dx * dx + dy * dy;
-            if (d2 < best_d2) { best_d2 = d2; matched = (int)i; }
+            if (d2 < best_d2) { best_d2 = d2; cur_idx = (int)i; }
         }
-        if (matched >= 0) {
-            t->lock_cx = cands[matched].cx;
-            t->lock_cy = cands[matched].cy;
-            t->cx = cands[matched].cx;
-            t->cy = cands[matched].cy;
-            t->fy = cands[matched].fy;
-            t->h = cands[matched].h;
-            t->w = cands[matched].w;
+
+        if (cur_idx >= 0) {
+            // 当前目标仍在视野 —— 判断是否切换
+            bool switch_target = false;
+            if (cand_idx >= 0 && cand_idx != cur_idx) {
+                const int cur_layer = layer_of((uint32_t)cur_idx);
+                if (cur_layer > 1) {
+                    // 当前脱离攻击带 → 立即切（无冷却）
+                    switch_target = true;
+                } else if (now - t->last_target_switch_ms >= kTargetSwitchCooldownMs) {
+                    // 冷却已过 → 评估
+                    if (cand_layer < cur_layer) {
+                        switch_target = true;  // 层级更优
+                    } else if (cand_layer == cur_layer) {
+                        const float cur_d = std::fabs(cands[cur_idx].cx - me.lock_fx);
+                        if (cand_d < cur_d) switch_target = true;  // 同层更近
+                    }
+                }
+                // 冷却中且当前在带内 → 保持
+            }
+
+            if (switch_target && cand_idx >= 0) {
+                cur_idx = cand_idx;
+                t->last_target_switch_ms = now;
+            }
+
+            t->lock_cx = cands[cur_idx].cx;
+            t->lock_cy = cands[cur_idx].cy;
+            t->cx = cands[cur_idx].cx;
+            t->cy = cands[cur_idx].cy;
+            t->fy = cands[cur_idx].fy;
+            t->h = cands[cur_idx].h;
+            t->w = cands[cur_idx].w;
             t->lost_since = 0;
             t->has = true;
             return;
         }
-        if (t->lost_since == 0) {
-            t->lost_since = now;
-        }
+
+        // 当前目标丢失 —— 宽容期
+        if (t->lost_since == 0) t->lost_since = now;
         if (now - t->lost_since < kTargetLoseMs) {
             t->has = true;
             return;
@@ -185,27 +239,21 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
         t->lost_since = 0;
     }
 
-    if (n == 0) {
-        t->has = false;
-        return;
-    }
-    float best_d = 1e9f;
-    int best = -1;
-    for (uint32_t i = 0; i < n; ++i) {
-        const float d = std::fabs(cands[i].cx - me.lock_fx);
-        if (d < best_d) { best_d = d; best = (int)i; }
-    }
-    if (best >= 0) {
+    // 未锁定（或刚解锁）→ 选 candidate
+    if (cand_idx >= 0) {
         t->locked = true;
-        t->lock_cx = cands[best].cx;
-        t->lock_cy = cands[best].cy;
-        t->cx = cands[best].cx;
-        t->cy = cands[best].cy;
-        t->fy = cands[best].fy;
-        t->h = cands[best].h;
-        t->w = cands[best].w;
+        t->lock_cx = cands[cand_idx].cx;
+        t->lock_cy = cands[cand_idx].cy;
+        t->cx = cands[cand_idx].cx;
+        t->cy = cands[cand_idx].cy;
+        t->fy = cands[cand_idx].fy;
+        t->h = cands[cand_idx].h;
+        t->w = cands[cand_idx].w;
         t->lost_since = 0;
+        t->last_target_switch_ms = now;
         t->has = true;
+    } else {
+        t->has = false;
     }
 }
 
@@ -482,7 +530,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     SelectMe(world, &impl_->me);
 
     if (impl_->me.valid) {
-        SelectTarget(world, impl_->me, &impl_->target);
+        SelectTarget(world, impl_->me, impl_->facing, &impl_->target);
     } else {
         impl_->target.has = false;
     }
