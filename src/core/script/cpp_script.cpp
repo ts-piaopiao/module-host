@@ -323,7 +323,7 @@ struct CppScript::Impl {
     int facing = 1;
     uint64_t last_dir_ms = 0;
     uint64_t dir_press_start_ms = 0;   // 当前方向键按住起点；0 = 未按住
-    uint64_t dir_min_hold_ms = 0;      // 本次按住目标时长（200-500 随机）；按开始时采样
+    uint64_t dir_min_hold_ms = 0;      // 本次按住目标时长；按开始时从 E 分位表采样
     int active_dir_key = 0;   // 当前实际按住的方向键（0 / 0x25 / 0x27）
 
     // 转身攻击
