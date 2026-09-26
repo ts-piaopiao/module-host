@@ -24,4 +24,15 @@ constexpr int64_t kEHoldProfile[][2] = {
 };
 constexpr int kEHoldProfileSize = 8;
 
+// 方向键最短按住的分位表（真人方向键 hold 的低分位，截断到 1000ms 上限）。
+// 用途：约束脚本方向键"最短按住"，消除 <250ms 的碎步；
+// 追击到达攻击带时若已过此下限则正常松手——不影响长按追击。
+constexpr int64_t kDirHoldProfile[][2] = {
+    {  0, 250000},   // 250ms
+    { 25, 400000},   // 400ms
+    { 50, 600000},   // 600ms
+    {100, 1000000},  // 1000ms
+};
+constexpr int kDirHoldProfileSize = 4;
+
 #endif  // MODULE_HOST_HUMAN_PROFILE_H

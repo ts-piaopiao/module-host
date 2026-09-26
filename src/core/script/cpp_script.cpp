@@ -333,7 +333,7 @@ struct CppScript::Impl {
     int facing = 1;
     uint64_t last_dir_ms = 0;
     uint64_t dir_press_start_ms = 0;   // 当前方向键按住起点；0 = 未按住
-    uint64_t dir_min_hold_ms = 0;      // 本次按住目标时长；按开始时从 E 分位表采样
+    uint64_t dir_min_hold_ms = 0;      // 本次按住目标时长；按开始时从方向键分位表采样
     int active_dir_key = 0;   // 当前实际按住的方向键（0 / 0x25 / 0x27）
 
     // 转身攻击
@@ -780,8 +780,8 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     if (desired_dir != impl_->active_dir_key) {
         if (desired_dir != 0) {
             impl_->dir_press_start_ms = now;
-            // 方向键最短按住：与 E 键同源（真人分位表采样，微秒转毫秒）
-            const int64_t hold_us = SampleFromProfile(kEHoldProfile, kEHoldProfileSize, impl_->rng);
+            // 方向键最短按住：从真人方向键低分位表采样，消除碎步
+            const int64_t hold_us = SampleFromProfile(kDirHoldProfile, kDirHoldProfileSize, impl_->rng);
             impl_->dir_min_hold_ms = static_cast<uint64_t>(hold_us / 1000);
         } else {
             impl_->dir_press_start_ms = 0;
