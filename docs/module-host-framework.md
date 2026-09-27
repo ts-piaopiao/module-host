@@ -620,7 +620,7 @@ build\Release\core.exe --plugins-dir <scenario_dir>
 
 ### 主验收入口
 
-`scripts/run_all.ps1` 含 10 步：
+`scripts/run_all.ps1` 含 11 步：
 
 1. 契约编译（C11 + C++17）
 2. OFF configure + build
@@ -629,6 +629,7 @@ build\Release\core.exe --plugins-dir <scenario_dir>
 5. OFF 阶段 1 验收（11 场景）
 6. ON configure + build
 7. script replay 构建 + 6 fixture 回放
-8. ON 正常 plugins 5 帧闭环
-9. prepare_runtime_error_dirs
-10. ON 阶段 2 验收（5 场景）
+8. output probe 构建 + 回放
+9. ON 正常 plugins 5 帧闭环
+10. prepare_runtime_error_dirs
+11. ON 阶段 2 验收（5 场景）
