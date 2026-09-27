@@ -1,5 +1,7 @@
 #include "cpp_script.h"
 
+#include "script_config.h"
+
 #include "human_profile.h"
 
 #include "script_types.h"
@@ -12,22 +14,6 @@
 #include <random>
 
 namespace {
-
-constexpr float kPriorX = 0.5f;
-constexpr float kPriorY = 0.72f;
-constexpr float kMeLockRange = 0.05f;
-constexpr uint64_t kMeRelockMs = 1000;
-constexpr float kTargetMatchX = 0.025f;
-constexpr float kTargetMatchY = 0.037f;
-constexpr uint64_t kTargetLoseMs = 500;
-constexpr uint64_t kTargetSwitchCooldownMs = 500;
-constexpr float kSamePlatY = 0.028f;
-constexpr float kBandXMin = 0.010f;
-// 冰冻术硬范围 300px，缩 20px 留容错 → 280px，归一化 280/1920 = 0.1458
-constexpr float kBandXMaxSame = 0.1458f;
-constexpr float kBandXMaxCross = 0.104f;
-constexpr float kBandYMin = -0.074f;
-constexpr float kBandYMax = 0.019f;
 
 struct MeLockState {
     bool valid = false;
@@ -81,8 +67,8 @@ void SelectMe(const ScriptWorld& world, MeLockState* m) {
         float best_d2 = 1e9f;
         int best = -1;
         for (uint32_t i = 0; i < n; ++i) {
-            const float dx = cands[i].fx - kPriorX;
-            const float dy = cands[i].fy - kPriorY;
+            const float dx = cands[i].fx - ScriptConfig::kPriorX;
+            const float dy = cands[i].fy - ScriptConfig::kPriorY;
             const float d2 = dx * dx + dy * dy;
             if (d2 < best_d2) { best_d2 = d2; best = (int)i; }
         }
@@ -99,7 +85,7 @@ void SelectMe(const ScriptWorld& world, MeLockState* m) {
     }
 
     int matched = -1;
-    float best_d2 = kMeLockRange * kMeLockRange;
+    float best_d2 = ScriptConfig::kMeLockRange * ScriptConfig::kMeLockRange;
     for (uint32_t i = 0; i < n; ++i) {
         const float dx = cands[i].fx - m->lock_fx;
         const float dy = cands[i].fy - m->lock_fy;
@@ -121,7 +107,7 @@ void SelectMe(const ScriptWorld& world, MeLockState* m) {
         m->lost_since = now;
     }
     const uint64_t elapsed = now - m->lost_since;
-    if (elapsed < kMeRelockMs) {
+    if (elapsed < ScriptConfig::kMeRelockMs) {
         m->valid = true;
     } else {
         m->locked = false;
@@ -149,7 +135,7 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
         const auto& d = world.dets->items[i];
         if (d.cls != 1) continue;
         const float d_fy = (d.cy + d.h * 0.5f) - me.lock_fy;
-        if (std::fabs(d_fy) > kSamePlatY) continue;
+        if (std::fabs(d_fy) > ScriptConfig::kSamePlatY) continue;
         if (n >= CORE_MAX_DETECTIONS) break;
         cands[n].cx = d.cx;
         cands[n].cy = d.cy;
@@ -189,7 +175,7 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
         for (uint32_t i = 0; i < n; ++i) {
             const float dx = std::fabs(cands[i].cx - t->lock_cx);
             const float dy = std::fabs(cands[i].cy - t->lock_cy);
-            if (dx > kTargetMatchX || dy > kTargetMatchY) continue;
+            if (dx > ScriptConfig::kTargetMatchX || dy > ScriptConfig::kTargetMatchY) continue;
             const float d2 = dx * dx + dy * dy;
             if (d2 < best_d2) { best_d2 = d2; cur_idx = (int)i; }
         }
@@ -202,7 +188,7 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
                 if (cur_layer > 1) {
                     // 当前脱离攻击带 → 立即切（无冷却）
                     switch_target = true;
-                } else if (now - t->last_target_switch_ms >= kTargetSwitchCooldownMs) {
+                } else if (now - t->last_target_switch_ms >= ScriptConfig::kTargetSwitchCooldownMs) {
                     // 冷却已过 → 评估
                     if (cand_layer < cur_layer) {
                         switch_target = true;  // 层级更优
@@ -233,7 +219,7 @@ void SelectTarget(const ScriptWorld& world, const MeLockState& me,
 
         // 当前目标丢失 —— 宽容期
         if (t->lost_since == 0) t->lost_since = now;
-        if (now - t->lost_since < kTargetLoseMs) {
+        if (now - t->lost_since < ScriptConfig::kTargetLoseMs) {
             t->has = true;
             return;
         }
@@ -272,14 +258,14 @@ bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
         x_near = me.fx - t_right;
         x_far  = me.fx - t_left;
     }
-    if (x_far < kBandXMin) return false;
-    if (x_near > kBandXMaxSame) return false;
+    if (x_far < ScriptConfig::kBandXMin) return false;
+    if (x_near > ScriptConfig::kBandXMaxSame) return false;
 
     // Y 轴：怪物 bbox 与 [me.fy + kBandYMin, me.fy + kBandYMax] 相交
     const float t_top = t.cy - t.h * 0.5f;
     const float t_bot = t.cy + t.h * 0.5f;
-    const float band_top = me.fy + kBandYMin;
-    const float band_bot = me.fy + kBandYMax;
+    const float band_top = me.fy + ScriptConfig::kBandYMin;
+    const float band_bot = me.fy + ScriptConfig::kBandYMax;
     if (t_bot < band_top || t_top > band_bot) return false;
 
     // 椭圆约束：X 最远随 Y 高度衰减
@@ -287,14 +273,14 @@ bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
     const float y_clip_top = (t_top > band_top) ? t_top : band_top;
     const float y_clip_bot = (t_bot < band_bot) ? t_bot : band_bot;
     const float y_rep = (y_clip_top + y_clip_bot) * 0.5f - me.fy;
-    const float y_half = (y_rep < 0.0f) ? (-kBandYMin) : kBandYMax;
+    const float y_half = (y_rep < 0.0f) ? (-ScriptConfig::kBandYMin) : ScriptConfig::kBandYMax;
     if (y_half <= 0.0f) return false;
     const float ny = y_rep / y_half;
     const float scale = 1.0f - ny * ny;
     if (scale <= 0.0f) return false;
-    const float x_max_at_y = kBandXMaxSame * std::sqrt(scale);
+    const float x_max_at_y = ScriptConfig::kBandXMaxSame * std::sqrt(scale);
 
-    if (x_far < kBandXMin) return false;
+    if (x_far < ScriptConfig::kBandXMin) return false;
     if (x_near > x_max_at_y) return false;
     return true;
 }
@@ -311,51 +297,33 @@ bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
         x_near = me_fx - t_right;
         x_far  = me_fx - t_left;
     }
-    if (x_far < kBandXMin) return false;
-    if (x_near > kBandXMaxSame) return false;
+    if (x_far < ScriptConfig::kBandXMin) return false;
+    if (x_near > ScriptConfig::kBandXMaxSame) return false;
 
     const float t_top = t_cy - t_h * 0.5f;
     const float t_bot = t_cy + t_h * 0.5f;
-    const float band_top = me_fy + kBandYMin;
-    const float band_bot = me_fy + kBandYMax;
+    const float band_top = me_fy + ScriptConfig::kBandYMin;
+    const float band_bot = me_fy + ScriptConfig::kBandYMax;
     if (t_bot < band_top || t_top > band_bot) return false;
 
     const float y_clip_top = (t_top > band_top) ? t_top : band_top;
     const float y_clip_bot = (t_bot < band_bot) ? t_bot : band_bot;
     const float y_rep = (y_clip_top + y_clip_bot) * 0.5f - me_fy;
-    const float y_half = (y_rep < 0.0f) ? (-kBandYMin) : kBandYMax;
+    const float y_half = (y_rep < 0.0f) ? (-ScriptConfig::kBandYMin) : ScriptConfig::kBandYMax;
     if (y_half <= 0.0f) return false;
     const float ny = y_rep / y_half;
     const float scale = 1.0f - ny * ny;
     if (scale <= 0.0f) return false;
-    const float x_max_at_y = kBandXMaxSame * std::sqrt(scale);
+    const float x_max_at_y = ScriptConfig::kBandXMaxSame * std::sqrt(scale);
 
-    if (x_far < kBandXMin) return false;
+    if (x_far < ScriptConfig::kBandXMin) return false;
     if (x_near > x_max_at_y) return false;
     return true;
 }
 
 }  // namespace
 
-struct CombatConfig {
-    // CHASE → ATTACK 延迟：脚本快速反应（游戏机制，不是真人犹豫）
-    int attack_react_min_ms = 40;
-    int attack_react_max_ms = 70;
-
-    // RECOVERY → CHASE 延迟：脚本快速反应
-    int recovery_chase_min_ms = 30;
-    int recovery_chase_max_ms = 60;
-};
-
 struct CppScript::Impl {
-    // RECOVERY 时长（攻击后回到 CHASE 的过渡）。技能冷却不再由它承担。
-    static constexpr uint64_t kRecoveryMs = 300;
-    // 技能冷却硬下限：冰冻术 810ms。CHASE 进 ATTACK 前检查。
-    static constexpr uint64_t kSkillCooldownMs = 810;
-    static constexpr int kTurnPressDelayMinMs = 100;
-    static constexpr int kTurnPressDelayMaxMs = 200;
-    static constexpr uint64_t kTurnBounceMs = 200;
-
     uint64_t last_log_frame = 0;
     bool inited = false;
 
@@ -398,7 +366,7 @@ struct CppScript::Impl {
     uint64_t pending_chase_start_ms = 0;
     int pending_chase_delay_ms = 0;
 
-    CombatConfig cfg;
+    ScriptConfig cfg;
 
     std::mt19937 rng;
 
@@ -406,28 +374,7 @@ struct CppScript::Impl {
     bool desired_e = false;
 };
 
-static void Trim(const std::string& s, std::string* out) {
-    size_t begin = 0;
-    size_t end = s.size();
-    while (begin < end && (s[begin] == ' ' || s[begin] == '\t' || s[begin] == '\r' || s[begin] == '\n')) {
-        ++begin;
-    }
-    while (end > begin && (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r' || s[end - 1] == '\n')) {
-        --end;
-    }
-    *out = s.substr(begin, end - begin);
-}
-
-static bool ParseInt(const std::string& text, int* out) {
-    if (text.empty()) return false;
-    char* end = nullptr;
-    const long value = std::strtol(text.c_str(), &end, 10);
-    if (end == text.c_str() || *end != '\0') return false;
-    *out = static_cast<int>(value);
-    return true;
-}
-
-static void NormalizeConfig(CombatConfig* cfg) {
+static void NormalizeConfig(ScriptConfig* cfg) {
     if (cfg->attack_react_max_ms < cfg->attack_react_min_ms) {
         cfg->attack_react_max_ms = cfg->attack_react_min_ms;
     }
@@ -477,51 +424,7 @@ bool CppScript::Init(const std::string& config) {
                         static_cast<uint32_t>(now_ticks));
     }
 
-    impl_->cfg = CombatConfig{};
-
-    if (!config.empty()) {
-        size_t pos = 0;
-        const std::string content(config);
-        while (pos <= content.size()) {
-            size_t nl = content.find('\n', pos);
-            if (nl == std::string::npos) nl = content.size();
-            std::string line = content.substr(pos, nl - pos);
-            pos = nl + 1;
-
-            std::string trimmed;
-            Trim(line, &trimmed);
-            if (trimmed.empty() || trimmed[0] == '#') continue;
-
-            const size_t comment = trimmed.find('#');
-            if (comment != std::string::npos) {
-                trimmed = trimmed.substr(0, comment);
-                Trim(trimmed, &trimmed);
-                if (trimmed.empty()) continue;
-            }
-
-            const size_t eq = trimmed.find('=');
-            if (eq == std::string::npos) continue;
-
-            std::string key = trimmed.substr(0, eq);
-            std::string value = trimmed.substr(eq + 1);
-            Trim(key, &key);
-            Trim(value, &value);
-
-            int num = 0;
-            if (!ParseInt(value, &num)) continue;
-
-            if (key == "combat_attack_react_min_ms") {
-                impl_->cfg.attack_react_min_ms = num;
-            } else if (key == "combat_attack_react_max_ms") {
-                impl_->cfg.attack_react_max_ms = num;
-            } else if (key == "combat_recovery_chase_min_ms") {
-                impl_->cfg.recovery_chase_min_ms = num;
-            } else if (key == "combat_recovery_chase_max_ms") {
-                impl_->cfg.recovery_chase_max_ms = num;
-            }
-            // 未知键忽略
-        }
-    }
+    impl_->cfg = ScriptConfig::FromString(config);
 
     NormalizeConfig(&impl_->cfg);
 
@@ -636,9 +539,9 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     const bool cooldown_ok_turn =
                         (impl_->last_attack_release_ms == 0) ||
                         ((now - impl_->last_attack_release_ms) +
-                            static_cast<uint64_t>(Impl::kTurnPressDelayMinMs)
-                                >= Impl::kSkillCooldownMs);
-                    if (cooldown_ok_turn && now - impl_->last_dir_ms >= Impl::kTurnBounceMs) {
+                            static_cast<uint64_t>(ScriptConfig::kTurnPressDelayMinMs)
+                                >= ScriptConfig::kSkillCooldownMs);
+                    if (cooldown_ok_turn && now - impl_->last_dir_ms >= ScriptConfig::kTurnBounceMs) {
                         impl_->state = StateId::ATTACK_TURN;
                         impl_->turn_start_ms = now;
                         impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
@@ -653,7 +556,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         // E 按下时刻 = now + [100, 200]
                         {
                             std::uniform_int_distribution<int> ep(
-                                Impl::kTurnPressDelayMinMs, Impl::kTurnPressDelayMaxMs);
+                                ScriptConfig::kTurnPressDelayMinMs, ScriptConfig::kTurnPressDelayMaxMs);
                             impl_->turn_e_press_ms = now + static_cast<uint64_t>(ep(impl_->rng));
                         }
                         impl_->turn_e_release_ms = impl_->turn_e_press_ms +
@@ -681,7 +584,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         (impl_->last_attack_release_ms == 0) ||
                         ((now - impl_->last_attack_release_ms) +
                             static_cast<uint64_t>(impl_->cfg.attack_react_min_ms)
-                                >= Impl::kSkillCooldownMs);
+                                >= ScriptConfig::kSkillCooldownMs);
                     if (cooldown_ok) {
                         impl_->pending_attack = true;
                         impl_->pending_attack_start_ms = now;
@@ -743,7 +646,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     impl_->pending_chase = false;
                     impl_->state = StateId::IDLE;
                 }
-                else if (now - impl_->recovery_start_ms >= Impl::kRecoveryMs) {
+                else if (now - impl_->recovery_start_ms >= ScriptConfig::kRecoveryMs) {
                     if (!impl_->pending_chase) {
                         impl_->pending_chase = true;
                         impl_->pending_chase_start_ms = now;

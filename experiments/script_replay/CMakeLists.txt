@@ -10,6 +10,7 @@ get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE
 add_executable(script_replay
     main.cpp
     ${PROJECT_ROOT}/src/core/script/cpp_script.cpp
+    ${PROJECT_ROOT}/src/core/script/script_config.cpp
 )
 
 set_target_properties(script_replay PROPERTIES OUTPUT_NAME script_replay)
