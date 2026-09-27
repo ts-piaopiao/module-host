@@ -2,6 +2,8 @@
 
 #include "human_profile.h"
 
+#include "script_types.h"
+
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -357,11 +359,11 @@ struct CppScript::Impl {
     uint64_t last_log_frame = 0;
     bool inited = false;
 
-    enum class State { IDLE, CHASE, ATTACK, ATTACK_TURN, RECOVERY };
-    State state = State::IDLE;
+    StateId state = StateId::IDLE;
 
     MeLockState me;
     TargetLockState target;
+    Classified cls;   // 每帧分类缓存
 
     uint64_t attack_start_ms = 0;
     uint64_t recovery_start_ms = 0;
@@ -463,9 +465,17 @@ CppScript::CppScript() : impl_(new Impl()) {}
 CppScript::~CppScript() { delete impl_; }
 
 bool CppScript::Init(const std::string& config) {
-    const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-    impl_->rng.seed(static_cast<uint32_t>(std::time(nullptr)) ^
-                    static_cast<uint32_t>(now_ticks));
+    // RNG 种子：
+    //   - 若环境变量 MH_SCRIPT_SEED 已设 → 用它（测试用：固定种子下 trace 可逐字节对比）
+    //   - 否则 → 用现有 time ^ steady_clock（产品运行逻辑不变）
+    const char* seed_env = std::getenv("MH_SCRIPT_SEED");
+    if (seed_env != nullptr && seed_env[0] != '\0') {
+        impl_->rng.seed(static_cast<uint32_t>(std::atol(seed_env)));
+    } else {
+        const auto now_ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+        impl_->rng.seed(static_cast<uint32_t>(std::time(nullptr)) ^
+                        static_cast<uint32_t>(now_ticks));
+    }
 
     impl_->cfg = CombatConfig{};
 
@@ -537,9 +547,32 @@ void CppScript::OnFrame(const ScriptWorld& world) {
 
     const uint64_t now = world.now_ms;
 
+    // 每帧分类缓存（替代后续 3 处重复计算）
+    {
+        impl_->cls.in_band_front = false;
+        impl_->cls.in_band_back  = false;
+        impl_->cls.in_band_any   = false;
+        impl_->cls.dx            = 0.0f;
+        impl_->cls.abs_dx        = 0.0f;
+        impl_->cls.target_dir    = 0;
+        impl_->cls.is_front      = false;
+        impl_->cls.fresh_target  = false;
+
+        if (impl_->me.valid && impl_->target.has) {
+            impl_->cls.in_band_front = IsInBand(impl_->target, impl_->me, impl_->facing);
+            impl_->cls.in_band_back  = IsInBand(impl_->target, impl_->me, -impl_->facing);
+            impl_->cls.in_band_any   = impl_->cls.in_band_front || impl_->cls.in_band_back;
+            impl_->cls.dx            = impl_->target.cx - impl_->me.fx;
+            impl_->cls.abs_dx        = std::fabs(impl_->cls.dx);
+            impl_->cls.target_dir    = (impl_->cls.dx > 0) ? 1 : -1;
+            impl_->cls.is_front      = (impl_->cls.target_dir == impl_->facing);
+            impl_->cls.fresh_target  = (impl_->target.lost_since == 0);
+        }
+    }
+
     if (!impl_->me.valid || !impl_->target.has) {
-        if (impl_->state != Impl::State::IDLE) {
-            impl_->state = Impl::State::IDLE;
+        if (impl_->state != StateId::IDLE) {
+            impl_->state = StateId::IDLE;
             if (impl_->e_pressed) { impl_->last_attack_release_ms = now; }
             impl_->e_pressed = false;
             impl_->turn_key_pressed = false;
@@ -550,25 +583,25 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             impl_->pending_dir_release_ms = 0;
         }
     } else {
-        // 前带（facing 方向）和后带（反方向）分别判定
-        const bool in_band_front = IsInBand(impl_->target, impl_->me, impl_->facing);
-        const bool in_band_back  = IsInBand(impl_->target, impl_->me, -impl_->facing);
-        const float dx_target = impl_->target.cx - impl_->me.fx;
-        const int target_dir = (dx_target > 0) ? 1 : -1;
-        const bool is_front = (target_dir == impl_->facing);
-        const bool fresh_target = (impl_->target.lost_since == 0);
+        // 从 cls 缓存读（每帧只算一次）
+        const bool in_band_front = impl_->cls.in_band_front;
+        const bool in_band_back  = impl_->cls.in_band_back;
+        const float dx_target = impl_->cls.dx;
+        const int target_dir = impl_->cls.target_dir;
+        const bool is_front = impl_->cls.is_front;
+        const bool fresh_target = impl_->cls.fresh_target;
 
         switch (impl_->state) {
-            case Impl::State::IDLE:
+            case StateId::IDLE:
                 if (impl_->me.valid && impl_->target.has) {
-                    impl_->state = Impl::State::CHASE;
+                    impl_->state = StateId::CHASE;
                 }
                 break;
 
-            case Impl::State::CHASE:
+            case StateId::CHASE:
                 if (!impl_->me.valid || !impl_->target.has) {
                     impl_->pending_attack = false;
-                    impl_->state = Impl::State::IDLE;
+                    impl_->state = StateId::IDLE;
                 }
                 // 已在 pending：检查延迟
                 else if (impl_->pending_attack) {
@@ -577,7 +610,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                         impl_->pending_attack = false;
                         // 延迟到点，重新检查
                         if (in_band_front && is_front && fresh_target) {
-                            impl_->state = Impl::State::ATTACK;
+                            impl_->state = StateId::ATTACK;
                             impl_->attack_start_ms = now;
                             impl_->e_pressed = true;
                             impl_->current_e_tap_ms = SampleEHoldMs(impl_->rng);
@@ -606,7 +639,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                             static_cast<uint64_t>(Impl::kTurnPressDelayMinMs)
                                 >= Impl::kSkillCooldownMs);
                     if (cooldown_ok_turn && now - impl_->last_dir_ms >= Impl::kTurnBounceMs) {
-                        impl_->state = Impl::State::ATTACK_TURN;
+                        impl_->state = StateId::ATTACK_TURN;
                         impl_->turn_start_ms = now;
                         impl_->turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
                         impl_->facing = target_dir;
@@ -665,9 +698,9 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 }
                 break;
 
-            case Impl::State::ATTACK: {
+            case StateId::ATTACK: {
                 if (!impl_->me.valid || !impl_->target.has) {
-                    impl_->state = Impl::State::IDLE;
+                    impl_->state = StateId::IDLE;
                     if (impl_->e_pressed) { impl_->last_attack_release_ms = now; }
                     impl_->e_pressed = false;
                     break;
@@ -677,13 +710,13 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     static_cast<uint64_t>(impl_->current_e_tap_ms)) {
                     impl_->e_pressed = false;
                     impl_->last_attack_release_ms = now;
-                    impl_->state = Impl::State::RECOVERY;
+                    impl_->state = StateId::RECOVERY;
                     impl_->recovery_start_ms = now;
                 }
                 break;
             }
 
-            case Impl::State::ATTACK_TURN: {
+            case StateId::ATTACK_TURN: {
                 // E 按下
                 if (!impl_->turn_e_pressed && now >= impl_->turn_e_press_ms) {
                     impl_->turn_e_pressed = true;
@@ -699,16 +732,16 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                 }
                 // 两者都完成 → RECOVERY
                 if (!impl_->turn_key_pressed && !impl_->turn_e_pressed) {
-                    impl_->state = Impl::State::RECOVERY;
+                    impl_->state = StateId::RECOVERY;
                     impl_->recovery_start_ms = now;
                 }
                 break;
             }
 
-            case Impl::State::RECOVERY:
+            case StateId::RECOVERY:
                 if (!impl_->me.valid || !impl_->target.has) {
                     impl_->pending_chase = false;
-                    impl_->state = Impl::State::IDLE;
+                    impl_->state = StateId::IDLE;
                 }
                 else if (now - impl_->recovery_start_ms >= Impl::kRecoveryMs) {
                     if (!impl_->pending_chase) {
@@ -723,7 +756,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
                     if (now - impl_->pending_chase_start_ms >=
                         static_cast<uint64_t>(impl_->pending_chase_delay_ms)) {
                         impl_->pending_chase = false;
-                        impl_->state = Impl::State::CHASE;
+                        impl_->state = StateId::CHASE;
                     }
                 }
                 break;
@@ -736,30 +769,21 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     const float dx_target = impl_->target.cx - impl_->me.fx;
     const int target_dir = (dx_target > 0) ? 1 : -1;
 
-    if (impl_->state == Impl::State::IDLE) {
+    if (impl_->state == StateId::IDLE) {
         impl_->dir_press_start_ms = 0;
         impl_->dir_min_hold_ms = 0;
         impl_->active_dir_key = 0;
     }
 
     switch (impl_->state) {
-        case Impl::State::IDLE:
+        case StateId::IDLE:
             desired_dir = 0;
             desired_e = false;
             break;
 
-        case Impl::State::CHASE: {
-            const float abs_dx = std::fabs(dx_target);
-
-            // 带内判定（前带或后带）
-            const bool in_band_any =
-                IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
-                         impl_->target.h, impl_->target.w, impl_->facing)
-                || IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
-                         impl_->target.h, impl_->target.w, -impl_->facing);
-
-            // 带内不追、带外追——用 IsInBand 判定两方向，无中间地带。
-            const bool need_move = !in_band_any;
+        case StateId::CHASE: {
+            // 带内不追、带外追——用 cls 缓存判定，无中间地带。
+            const bool need_move = !impl_->cls.in_band_any;
 
             const int want_dir = need_move ? ((dx_target > 0) ? 0x27 : 0x25) : 0;
             desired_dir = want_dir;
@@ -767,18 +791,18 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             break;
         }
 
-        case Impl::State::ATTACK:
+        case StateId::ATTACK:
             desired_dir = 0;
             desired_e = true;
             break;
 
-        case Impl::State::ATTACK_TURN: {
+        case StateId::ATTACK_TURN: {
             desired_dir = impl_->turn_key_pressed ? impl_->turn_dir_key : 0;
             desired_e = impl_->turn_e_pressed;
             break;
         }
 
-        case Impl::State::RECOVERY:
+        case StateId::RECOVERY:
             desired_dir = 0;
             desired_e = false;
             break;
@@ -791,7 +815,7 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     //      （怪不在身后的前提下）→ 保持原键
     //   3. facing 永远从最终 out_dir 反推（I10）
 
-    if (impl_->state != Impl::State::IDLE && impl_->active_dir_key != 0) {
+    if (impl_->state != StateId::IDLE && impl_->active_dir_key != 0) {
         const bool want_change = (desired_dir != impl_->active_dir_key);
         if (want_change) {
             const bool held_long_enough =
@@ -807,13 +831,8 @@ void CppScript::OnFrame(const ScriptWorld& world) {
     }
 
     // 进带 → 强制松方向键（不受最短按住约束，这是"到达"不是"抖动"）
-    if (impl_->state == Impl::State::CHASE) {
-        const bool in_band_any2 =
-            IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
-                     impl_->target.h, impl_->target.w, impl_->facing)
-            || IsInBand(impl_->me.fx, impl_->me.fy, impl_->target.cx, impl_->target.cy,
-                     impl_->target.h, impl_->target.w, -impl_->facing);
-        if (in_band_any2) {
+    if (impl_->state == StateId::CHASE) {
+        if (impl_->cls.in_band_any) {
             desired_dir = 0;
         }
     }
@@ -857,11 +876,11 @@ void CppScript::OnFrame(const ScriptWorld& world) {
         impl_->last_log_frame = world.frame_index;
         const char* state_str = "IDLE";
         switch (impl_->state) {
-            case Impl::State::IDLE: state_str = "IDLE"; break;
-            case Impl::State::CHASE: state_str = "CHASE"; break;
-            case Impl::State::ATTACK: state_str = "ATTACK"; break;
-            case Impl::State::ATTACK_TURN: state_str = "ATTACK_TURN"; break;
-            case Impl::State::RECOVERY: state_str = "RECOVERY"; break;
+            case StateId::IDLE: state_str = "IDLE"; break;
+            case StateId::CHASE: state_str = "CHASE"; break;
+            case StateId::ATTACK: state_str = "ATTACK"; break;
+            case StateId::ATTACK_TURN: state_str = "ATTACK_TURN"; break;
+            case StateId::RECOVERY: state_str = "RECOVERY"; break;
         }
         std::printf("[script] frame=%llu state=%s facing=%d me_locked=%d me=(%.3f,%.3f) target_locked=%d target_cx=%.3f key=0x%02X e=%d\n",
                     (unsigned long long)world.frame_index,
