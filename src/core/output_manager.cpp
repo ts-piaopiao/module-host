@@ -133,6 +133,80 @@ const char* KeyName(int32_t vk) {
     case 0x28: return "down";
     case 0x25: return "left";
     case 0x27: return "right";
+
+    // ── 功能键 F1-F12 ──
+    case 0x70: return "f1";
+    case 0x71: return "f2";
+    case 0x72: return "f3";
+    case 0x73: return "f4";
+    case 0x74: return "f5";
+    case 0x75: return "f6";
+    case 0x76: return "f7";
+    case 0x77: return "f8";
+    case 0x78: return "f9";
+    case 0x79: return "f10";
+    case 0x7A: return "f11";
+    case 0x7B: return "f12";
+
+    // ── 编辑与导航 ──
+    case 0x2D: return "insert";
+    case 0x2E: return "delete";
+    case 0x24: return "home";
+    case 0x23: return "end";
+    case 0x21: return "pageup";
+    case 0x22: return "pagedown";
+
+    // ── 特殊键 ──
+    case 0x14: return "capslock";
+    case 0x2C: return "printscreen";
+    case 0x91: return "scrolllock";
+    case 0x13: return "pause";
+
+    // ── 符号（US 布局）──
+    case 0xBD: return "minus";       // -
+    case 0xBB: return "equal";       // =
+    case 0xDB: return "lbracket";    // [
+    case 0xDD: return "rbracket";    // ]
+    case 0xDC: return "backslash";   // \ 键帽
+    case 0xBA: return "semicolon";   // ;
+    case 0xDE: return "quote";       // '
+    case 0xC0: return "grave";       // `
+    case 0xBC: return "comma";       // ,
+    case 0xBE: return "period";      // .
+    case 0xBF: return "slash";       // /
+
+    // ── 数字小键盘 ──
+    case 0x90: return "numlock";
+    case 0x6F: return "kp_divide";
+    case 0x6A: return "kp_multiply";
+    case 0x6D: return "kp_minus";
+    case 0x6B: return "kp_plus";
+    case 0x6E: return "kp_period";
+    case 0x60: return "kp_0";
+    case 0x61: return "kp_1";
+    case 0x62: return "kp_2";
+    case 0x63: return "kp_3";
+    case 0x64: return "kp_4";
+    case 0x65: return "kp_5";
+    case 0x66: return "kp_6";
+    case 0x67: return "kp_7";
+    case 0x68: return "kp_8";
+    case 0x69: return "kp_9";
+
+    // ── 修饰键（L/R 区分）──
+    case 0xA0: return "lshift";
+    case 0xA1: return "rshift";
+    case 0xA2: return "lctrl";
+    case 0xA3: return "rctrl";
+    case 0xA4: return "lalt";
+    case 0xA5: return "ralt";
+    case 0x5B: return "win";         // 短名 WIN = LWIN
+    case 0x5C: return "rwin";
+
+    // ── 杂项 ──
+    case 0x5D: return "app";
+    case 0x5F: return "power";       // VK_SLEEP（近似对应 Mimic POWER）
+
     default: return nullptr;
     }
 }
