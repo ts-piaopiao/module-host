@@ -133,7 +133,7 @@ main.cpp 不变，仍然只调 decider.Update。
 
 7a–7c 的核心目标已实现，但形式与原设计不同：
 
-- 战斗状态机：已实现，在 `src/core/script/cpp_script.cpp`
+- 战斗状态机：已实现，在 `src/core/script/script_fsm.cpp` + `script_states.cpp`
 - 参数从 config 读：已实现，前缀为 `combat_*`（非 `decider_*`）
 - E 时长分布、攻击反应延迟、RECOVERY→CHASE 延迟：已实现
 
@@ -145,7 +145,8 @@ main.cpp 不变，仍然只调 decider.Update。
 
 ### 实际实现
 
-决策逻辑在 `CppScript`（`src/core/script/cpp_script.cpp`）。
+决策逻辑在 `CppScript`（`src/core/script/cpp_script.cpp`）顶层组装，
+状态机拆入 `script_fsm.cpp` + `script_states.cpp`。
 
 状态机有 5 个状态：`IDLE / CHASE / ATTACK / ATTACK_TURN / RECOVERY`。
 
@@ -168,8 +169,8 @@ main.cpp 不变，仍然只调 decider.Update。
 - `combat_recovery_chase_min_ms` / `combat_recovery_chase_max_ms`
 
 原设计稿的 `decider_*` 前缀（`decider_attack_band` / `decider_recovery_ms` /
-`decider_monster_lose_ms` 等）未实现；这些参数目前硬编码在 `cpp_script.cpp`
-的匿名命名空间和 `Impl` 常量里。
+`decider_monster_lose_ms` 等）未实现；几何与时序参数集中在 `script_config.h`
+的 `ScriptConfig` 常量里。
 
 ### 与设计文档的偏差
 

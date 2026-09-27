@@ -123,7 +123,9 @@ policy 插件内部有两个线程：
 
 `yolo_policy` 的 `plugin_decide` 只做一件事——把检测结果填进 `intent->detections_out`，`out->out_count = 0`。
 
-动作决策（打怪状态机）由宿主内的脚本承担，源文件 `src/core/script/cpp_script.cpp`，详见 `docs/stage7.md` 第十一节。
+动作决策（打怪状态机）由宿主内的脚本承担，状态机源文件
+`src/core/script/script_fsm.cpp` + `script_states.cpp`，顶层组装
+`src/core/script/cpp_script.cpp`，详见 `docs/stage7.md` 第十一节。
 
 ### 配置项的实际状态
 
@@ -189,5 +191,6 @@ Python 侧参考实现为 `D:\dev\COMPortService\app\vision\detector.py`。
 
 ### 与设计文档的偏差
 
-1. **5d 归属**：设计稿说"动作决策后续单独设计"，实际在 `cpp_script.cpp` 里实现（打怪状态机）。
+1. **5d 归属**：设计稿说"动作决策后续单独设计"，实际在脚本引擎里实现
+   （打怪状态机，`script_fsm.cpp` + `script_states.cpp`）。
 2. **推理线程的输出接口**：设计稿说"推理线程写 detections 缓存，主线程读"，实际用 `g_frame_mutex` + `g_result_mutex` 双向同步，主线程拷贝像素快照、读检测结果。

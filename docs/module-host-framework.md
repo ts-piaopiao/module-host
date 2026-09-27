@@ -615,7 +615,7 @@ build\Release\core.exe --plugins-dir <scenario_dir>
 |---|---|---|
 | 1 | 三插件（capture / policy / input） | 两插件（capture / policy）+ output_manager |
 | 2 | `class Decider` | `class ScriptHost` + `class CppScript`（见 `docs/stage6.md` 第九节） |
-| 3 | `class Combat` | 状态机直接在 `cpp_script.cpp`（见 `docs/stage7.md` 第十一节） |
+| 3 | `class Combat` | 状态机在 `script_fsm.cpp` + `script_states.cpp`（见 `docs/stage7.md` 第十一节） |
 | 4 | 决策层嵌在宿主 | 决策层做成可替换脚本，用 `experiments/script_replay` 回放验证 |
 
 ### 主验收入口

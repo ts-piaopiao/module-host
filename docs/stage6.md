@@ -167,10 +167,23 @@ policy 只看，宿主决策；契约只加，不改。
 决策逻辑放在宿主内的脚本引擎里，源文件为：
 
 ```
-src/core/script/iscript.h         脚本接口
-src/core/script/script_host.h     脚本宿主
+src/core/script/iscript.h               脚本接口
+src/core/script/script_types.h          共享类型（StateId / Classified / MeLockState / TargetLockState）
+src/core/script/script_config.h         配置常量与解析（ScriptConfig / FromString）
+src/core/script/script_config.cpp
+src/core/script/script_geometry.h       攻击区几何判定（IsInBand）
+src/core/script/script_geometry.cpp
+src/core/script/script_perception.h     自机与目标锁定（SelectMe / SelectTarget）
+src/core/script/script_perception.cpp
+src/core/script/script_sampling.h       真人分位表采样（SampleFromProfile / SampleEHoldMs）
+src/core/script/script_sampling.cpp
+src/core/script/script_fsm.h            运行时状态与 FSM 声明（Runtime / StateContext / TickFsm）
+src/core/script/script_fsm.cpp          FSM 分发
+src/core/script/script_states.cpp       5 个状态实现（StateIdle / StateChase / ...）
+src/core/script/human_profile.h         真人分位表数据
+src/core/script/script_host.h           脚本宿主
 src/core/script/script_host.cpp
-src/core/script/cpp_script.h      C++ 脚本实现（含 me_lock、状态机、输出决策）
+src/core/script/cpp_script.h            C++ 脚本实现（顶层组装 + 输出决策）
 src/core/script/cpp_script.cpp
 ```
 
@@ -181,12 +194,12 @@ src/core/script/cpp_script.cpp
 | `class Decider` | `class ScriptHost` + `class CppScript` |
 | `decider.Update(dets, out)` | `script_host.OnFrame(...)` + `script_host.GetDecision(out)` |
 | Decider 内部维护 me_lock | `CppScript::Impl` 的 `SelectMe()` |
-| 6d 状态机移植进 Decider | 状态机直接写在 `cpp_script.cpp` |
+| 6d 状态机移植进 Decider | 状态机拆入 `script_fsm.cpp` + `script_states.cpp` |
 
 ### 与设计文档的偏差
 
 1. 决策层不是 `Decider` 类，是 `IScript` / `ScriptHost` / `CppScript` 三层。
    理由：决策做成可替换脚本，便于用录制 JSONL 回放验证（见 `experiments/script_replay`）。
-2. `me_lock` 不在宿主侧，在 `cpp_script.cpp` 的 `SelectMe()` 里。
+2. `me_lock` 不在宿主侧，在 `script_perception.cpp` 的 `SelectMe()` 里。
 3. 状态机有 5 个状态：`IDLE / CHASE / ATTACK / ATTACK_TURN / RECOVERY`（比设计稿多 `ATTACK_TURN`）。
 4. `plugin_execute` 不逐动作调用；脚本决策统一送 `output_manager.SendScript()`。
