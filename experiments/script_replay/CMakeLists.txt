@@ -13,6 +13,9 @@ add_executable(script_replay
     ${PROJECT_ROOT}/src/core/script/script_config.cpp
     ${PROJECT_ROOT}/src/core/script/script_geometry.cpp
     ${PROJECT_ROOT}/src/core/script/script_perception.cpp
+    ${PROJECT_ROOT}/src/core/script/script_sampling.cpp
+    ${PROJECT_ROOT}/src/core/script/script_fsm.cpp
+    ${PROJECT_ROOT}/src/core/script/script_states.cpp
 )
 
 set_target_properties(script_replay PROPERTIES OUTPUT_NAME script_replay)

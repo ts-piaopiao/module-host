@@ -11,7 +11,7 @@ option(BUILD_STAGE2_PLUGINS "Build stage2 plugins" OFF)
 
 set(ONNXRUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
 
-add_executable(module_host_core src/core/main.cpp src/core/config.cpp src/core/remote_server.cpp src/core/jpeg_encoder.cpp src/core/output_manager.cpp src/core/script/script_host.cpp src/core/script/cpp_script.cpp src/core/script/script_config.cpp src/core/script/script_geometry.cpp src/core/script/script_perception.cpp src/core/recorder.cpp)
+add_executable(module_host_core src/core/main.cpp src/core/config.cpp src/core/remote_server.cpp src/core/jpeg_encoder.cpp src/core/output_manager.cpp src/core/script/script_host.cpp src/core/script/cpp_script.cpp src/core/script/script_config.cpp src/core/script/script_geometry.cpp src/core/script/script_perception.cpp src/core/script/script_sampling.cpp src/core/script/script_fsm.cpp src/core/script/script_states.cpp src/core/recorder.cpp)
 set_target_properties(module_host_core PROPERTIES OUTPUT_NAME core)
 target_include_directories(module_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 target_compile_options(module_host_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)

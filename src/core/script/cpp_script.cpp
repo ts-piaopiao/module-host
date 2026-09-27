@@ -12,12 +12,13 @@
 
 #include "script_fsm.h"
 
+#include "script_sampling.h"
+
 #include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
-#include <random>
 
 namespace {
 
@@ -34,31 +35,6 @@ static void NormalizeConfig(ScriptConfig* cfg) {
     if (cfg->recovery_chase_max_ms < cfg->recovery_chase_min_ms) {
         cfg->recovery_chase_max_ms = cfg->recovery_chase_min_ms;
     }
-}
-
-// 从分位表分段线性采样。u ∈ [0,100] 均匀取，在相邻分位点插值。
-static int64_t SampleFromProfile(const int64_t profile[][2], int n,
-                                 std::mt19937& rng) {
-    std::uniform_real_distribution<double> dist(0.0, 100.0);
-    const double u = dist(rng);
-    for (int i = 0; i < n - 1; ++i) {
-        if (u <= static_cast<double>(profile[i + 1][0])) {
-            const double p0 = static_cast<double>(profile[i][0]);
-            const double p1 = static_cast<double>(profile[i + 1][0]);
-            const double v0 = static_cast<double>(profile[i][1]);
-            const double v1 = static_cast<double>(profile[i + 1][1]);
-            if (p1 <= p0) return static_cast<int64_t>(v0);
-            const double t = (u - p0) / (p1 - p0);
-            return static_cast<int64_t>(v0 + t * (v1 - v0));
-        }
-    }
-    return profile[n - 1][1];
-}
-
-// E 键按住时长：从真人分位表采样（微秒转毫秒）
-static int SampleEHoldMs(std::mt19937& rng) {
-    const int64_t us = SampleFromProfile(kEHoldProfile, kEHoldProfileSize, rng);
-    return static_cast<int>(us / 1000);
 }
 
 CppScript::CppScript() : impl_(new Impl()) {}
@@ -139,184 +115,8 @@ void CppScript::OnFrame(const ScriptWorld& world) {
             impl_->rt.pending_dir_release_ms = 0;
         }
     } else {
-        // 从 cls 缓存读（每帧只算一次）
-        const bool in_band_front = impl_->rt.cls.in_band_front;
-        const bool in_band_back  = impl_->rt.cls.in_band_back;
-        const float dx_target = impl_->rt.cls.dx;
-        const int target_dir = impl_->rt.cls.target_dir;
-        const bool is_front = impl_->rt.cls.is_front;
-        const bool fresh_target = impl_->rt.cls.fresh_target;
-
-        switch (impl_->rt.state) {
-            case StateId::IDLE:
-                if (impl_->rt.me.valid && impl_->rt.target.has) {
-                    impl_->rt.state = StateId::CHASE;
-                }
-                break;
-
-            case StateId::CHASE:
-                if (!impl_->rt.me.valid || !impl_->rt.target.has) {
-                    impl_->rt.pending_attack = false;
-                    impl_->rt.state = StateId::IDLE;
-                }
-                // 已在 pending：检查延迟
-                else if (impl_->rt.pending_attack) {
-                    if (now - impl_->rt.pending_attack_start_ms >=
-                        static_cast<uint64_t>(impl_->rt.pending_attack_delay_ms)) {
-                        impl_->rt.pending_attack = false;
-                        // 延迟到点，重新检查
-                        if (in_band_front && is_front && fresh_target) {
-                            impl_->rt.state = StateId::ATTACK;
-                            impl_->rt.attack_start_ms = now;
-                            impl_->rt.e_pressed = true;
-                            impl_->rt.current_e_tap_ms = SampleEHoldMs(impl_->rt.rng);
-                            // 技能动作内随机时刻松方向键（模拟人类攻击时手离方向键）
-    if (impl_->rt.active_dir_key != 0) {
-        // E 按下后 300~800ms 内随机抬起方向键（攻击僵直期间按住无影响）
-        std::uniform_int_distribution<int> dist(300, 800);
-        impl_->rt.pending_dir_release_ms = now + static_cast<uint64_t>(dist(impl_->rt.rng));
-    }
-                            std::printf("[script] E 按下时长: %d ms\n",
-                                        impl_->rt.current_e_tap_ms);
-                            std::fflush(stdout);
-                        }
-                    }
-                }
-                // 背面进带：S7 逻辑（转身）
-                else if (in_band_back && !is_front && fresh_target) {
-                    // 技能冷却检查：与正面进带同样对待。
-                    // 若上次 E release 距"预计实际按 E"（now + bounce + turn_press_delay 下限）还不到
-                    // kSkillCooldownMs，则不进入 ATTACK_TURN，留在 CHASE 等冷却。
-                    // 注意：bounce 是入场门闩（可能已过），不计入时间保守项；
-                    // 只用 turn_press_delay 下限做保守估计。
-                    const bool cooldown_ok_turn =
-                        (impl_->rt.last_attack_release_ms == 0) ||
-                        ((now - impl_->rt.last_attack_release_ms) +
-                            static_cast<uint64_t>(ScriptConfig::kTurnPressDelayMinMs)
-                                >= ScriptConfig::kSkillCooldownMs);
-                    if (cooldown_ok_turn && now - impl_->rt.last_dir_ms >= ScriptConfig::kTurnBounceMs) {
-                        impl_->rt.state = StateId::ATTACK_TURN;
-                        impl_->rt.turn_start_ms = now;
-                        impl_->rt.turn_dir_key = (target_dir > 0) ? 0x27 : 0x25;
-                        impl_->rt.facing = target_dir;
-                        impl_->rt.last_dir_ms = now;
-                        impl_->rt.turn_key_pressed = true;
-                        impl_->rt.turn_e_pressed = false;
-
-                        // 采样 E 时长
-                        impl_->rt.current_e_tap_ms = SampleEHoldMs(impl_->rt.rng);
-
-                        // E 按下时刻 = now + [100, 200]
-                        {
-                            std::uniform_int_distribution<int> ep(
-                                ScriptConfig::kTurnPressDelayMinMs, ScriptConfig::kTurnPressDelayMaxMs);
-                            impl_->rt.turn_e_press_ms = now + static_cast<uint64_t>(ep(impl_->rt.rng));
-                        }
-                        impl_->rt.turn_e_release_ms = impl_->rt.turn_e_press_ms +
-                            static_cast<uint64_t>(impl_->rt.current_e_tap_ms);
-
-                        // 方向键松开时刻 = now + [dir_min_hold, 800]
-                        uint64_t dir_min_hold_ms = 300;
-                        {
-                            const int64_t us = SampleFromProfile(
-                                kDirHoldProfile, kDirHoldProfileSize, impl_->rt.rng);
-                            dir_min_hold_ms = static_cast<uint64_t>(us / 1000);
-                        }
-                        {
-                            std::uniform_int_distribution<uint64_t> dd(dir_min_hold_ms, 800);
-                            impl_->rt.turn_dir_release_ms = now + dd(impl_->rt.rng);
-                        }
-                    }
-                    // 冷却未到或 bounce 未过：留在 CHASE，下一帧再试
-                }
-                // 正面进带：设 pending (S8)；先检查技能冷却
-                else if (in_band_front && is_front && fresh_target) {
-                    // 技能冷却硬下限检查：上次 E release 到"实际按 E"（now + pending_delay）
-                    // 必须 ≥ 810ms。用 pending_delay 下限做保守检查。
-                    const bool cooldown_ok =
-                        (impl_->rt.last_attack_release_ms == 0) ||
-                        ((now - impl_->rt.last_attack_release_ms) +
-                            static_cast<uint64_t>(impl_->rt.cfg.attack_react_min_ms)
-                                >= ScriptConfig::kSkillCooldownMs);
-                    if (cooldown_ok) {
-                        impl_->rt.pending_attack = true;
-                        impl_->rt.pending_attack_start_ms = now;
-                        {
-                            std::uniform_int_distribution<int> dist(
-                                impl_->rt.cfg.attack_react_min_ms, impl_->rt.cfg.attack_react_max_ms);
-                            impl_->rt.pending_attack_delay_ms = dist(impl_->rt.rng);
-                        }
-                        std::printf("[script] 攻击反应延迟: %d ms\n",
-                                    impl_->rt.pending_attack_delay_ms);
-                        std::fflush(stdout);
-                    }
-                    // 冷却未到：不设 pending，继续 CHASE，下一帧再试
-                }
-                break;
-
-            case StateId::ATTACK: {
-                if (!impl_->rt.me.valid || !impl_->rt.target.has) {
-                    impl_->rt.state = StateId::IDLE;
-                    if (impl_->rt.e_pressed) { impl_->rt.last_attack_release_ms = now; }
-                    impl_->rt.e_pressed = false;
-                    break;
-                }
-
-                if (now - impl_->rt.attack_start_ms >=
-                    static_cast<uint64_t>(impl_->rt.current_e_tap_ms)) {
-                    impl_->rt.e_pressed = false;
-                    impl_->rt.last_attack_release_ms = now;
-                    impl_->rt.state = StateId::RECOVERY;
-                    impl_->rt.recovery_start_ms = now;
-                }
-                break;
-            }
-
-            case StateId::ATTACK_TURN: {
-                // E 按下
-                if (!impl_->rt.turn_e_pressed && now >= impl_->rt.turn_e_press_ms) {
-                    impl_->rt.turn_e_pressed = true;
-                }
-                // E 释放
-                if (impl_->rt.turn_e_pressed && now >= impl_->rt.turn_e_release_ms) {
-                    impl_->rt.turn_e_pressed = false;
-                    impl_->rt.last_attack_release_ms = now;
-                }
-                // 方向键释放
-                if (impl_->rt.turn_key_pressed && now >= impl_->rt.turn_dir_release_ms) {
-                    impl_->rt.turn_key_pressed = false;
-                }
-                // 两者都完成 → RECOVERY
-                if (!impl_->rt.turn_key_pressed && !impl_->rt.turn_e_pressed) {
-                    impl_->rt.state = StateId::RECOVERY;
-                    impl_->rt.recovery_start_ms = now;
-                }
-                break;
-            }
-
-            case StateId::RECOVERY:
-                if (!impl_->rt.me.valid || !impl_->rt.target.has) {
-                    impl_->rt.pending_chase = false;
-                    impl_->rt.state = StateId::IDLE;
-                }
-                else if (now - impl_->rt.recovery_start_ms >= ScriptConfig::kRecoveryMs) {
-                    if (!impl_->rt.pending_chase) {
-                        impl_->rt.pending_chase = true;
-                        impl_->rt.pending_chase_start_ms = now;
-                        {
-                            std::uniform_int_distribution<int> dist(
-                                impl_->rt.cfg.recovery_chase_min_ms, impl_->rt.cfg.recovery_chase_max_ms);
-                            impl_->rt.pending_chase_delay_ms = dist(impl_->rt.rng);
-                        }
-                    }
-                    if (now - impl_->rt.pending_chase_start_ms >=
-                        static_cast<uint64_t>(impl_->rt.pending_chase_delay_ms)) {
-                        impl_->rt.pending_chase = false;
-                        impl_->rt.state = StateId::CHASE;
-                    }
-                }
-                break;
-        }
+        StateContext ctx(impl_->rt, world, now);
+        TickFsm(ctx);
     } // End of else block (me.valid && target.has)
 
     // 决定按键

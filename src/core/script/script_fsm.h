@@ -1,5 +1,7 @@
 #pragma once
 
+#include "iscript.h"
+
 #include "script_config.h"
 #include "script_types.h"
 
@@ -58,3 +60,21 @@ struct Runtime {
     int active_key = 0;
     bool desired_e = false;
 };
+
+struct StateContext {
+    Runtime& rt;
+    const ScriptWorld& world;
+    uint64_t now;
+    std::mt19937& rng;
+
+    StateContext(Runtime& r, const ScriptWorld& w, uint64_t n)
+        : rt(r), world(w), now(n), rng(r.rng) {}
+};
+
+void StateIdle(StateContext& ctx);
+void StateChase(StateContext& ctx);
+void StateAttack(StateContext& ctx);
+void StateAttackTurn(StateContext& ctx);
+void StateRecovery(StateContext& ctx);
+
+void TickFsm(StateContext& ctx);
