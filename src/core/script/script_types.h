@@ -25,3 +25,27 @@ struct Intent {
     int desired_dir = 0;
     bool desired_e = false;
 };
+
+struct MeLockState {
+    bool valid = false;
+    float fx = 0.0f;
+    float fy = 0.0f;
+    bool locked = false;
+    float lock_fx = 0.0f;
+    float lock_fy = 0.0f;
+    uint64_t lost_since = 0;
+};
+
+struct TargetLockState {
+    bool has = false;
+    float cx = 0.0f;
+    float cy = 0.0f;
+    float fy = 0.0f;
+    float h = 0.0f;
+    float w = 0.0f;
+    bool locked = false;
+    float lock_cx = 0.0f;
+    float lock_cy = 0.0f;
+    uint64_t lost_since = 0;
+    uint64_t last_target_switch_ms = 0;
+};
