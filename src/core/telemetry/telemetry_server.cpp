@@ -20,6 +20,7 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>module-host monitor</title>
+<link rel="icon" href="data:,">
 <style>
   :root {
     --bg: #1e1e1e;
