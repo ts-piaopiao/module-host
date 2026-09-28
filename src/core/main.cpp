@@ -9,13 +9,17 @@
 #include "telemetry/telemetry_server.h"
 #include "output_manager.h"
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -202,6 +206,90 @@ bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string*
 
 }  // namespace
 
+// UI-3b：回放模式。读 script_replay 产出的 trace.jsonl，
+// 按 t 差值节流，逐帧组装 FrameBundle 并 Publish 到遥测服务器。
+// 不需要 ScriptHost / 插件 / OutputManager。
+static int RunReplayMode(const std::string& trace_path,
+                         double speed,
+                         TelemetryServer* telemetry) {
+    using json = nlohmann::json;
+    std::ifstream in(trace_path, std::ios::in | std::ios::binary);
+    if (!in.is_open()) {
+        LogPrintf("[回放] 无法打开: %s\n", trace_path.c_str());
+        return 1;
+    }
+    if (speed <= 0.0) speed = 1.0;
+    LogPrintf("[回放] 开始: %s (speed=%.2fx)\n", trace_path.c_str(), speed);
+
+    std::string line;
+    uint64_t line_no = 0;
+    int64_t base_t = -1;
+    const auto base_wall = std::chrono::steady_clock::now();
+    uint64_t published = 0;
+    uint64_t bad_lines = 0;
+
+    while (std::getline(in, line)) {
+        ++line_no;
+        if (line.empty()) continue;
+
+        json j;
+        try {
+            j = json::parse(line);
+        } catch (...) {
+            ++bad_lines;
+            continue;
+        }
+
+        telemetry::FrameBundle bundle;
+        bundle.frame = j.value("frame", static_cast<uint64_t>(0));
+        bundle.t = telemetry::NowMicros();
+        bundle.script.state = j.value("state", 0);
+        bundle.script.facing = j.value("facing", 1);
+        bundle.script.me_locked = j.value("me_locked", 0) != 0;
+        bundle.script.me_fx = j.value("me_fx", 0.0f);
+        bundle.script.me_fy = j.value("me_fy", 0.0f);
+        bundle.script.target_locked = j.value("target_locked", 0) != 0;
+        bundle.script.target_cx = j.value("target_cx", 0.0f);
+        bundle.script.active_key = j.value("active_key", 0);
+        bundle.script.desired_e = j.value("desired_e", 0) != 0;
+
+        if (j.contains("dets") && j["dets"].is_array()) {
+            for (const auto& dj : j["dets"]) {
+                telemetry::DetectionSnapshot snap;
+                snap.cls  = dj.value("cls", 0);
+                snap.conf = dj.value("conf", 0.0f);
+                snap.cx   = dj.value("cx", 0.0f);
+                snap.cy   = dj.value("cy", 0.0f);
+                snap.w    = dj.value("w", 0.0f);
+                snap.h    = dj.value("h", 0.0f);
+                snap.id   = dj.value("id", 0);
+                bundle.dets.push_back(snap);
+            }
+        }
+
+        // 节流：按 trace.t 的相对差值（trace.t 单位由 script_replay 约定）。
+        // 用 sleep_until 累积补偿，避免 sleep_for 每次 15.6ms 误差累加。
+        const int64_t cur_t = j.value("t", static_cast<int64_t>(0));
+        if (base_t < 0) base_t = cur_t;
+        const int64_t rel_ms = cur_t - base_t;
+        if (rel_ms > 0) {
+            const auto target = base_wall + std::chrono::milliseconds(
+                static_cast<int64_t>(static_cast<double>(rel_ms) / speed));
+            std::this_thread::sleep_until(target);
+        }
+
+        if (telemetry != nullptr) {
+            telemetry->Publish(bundle);
+        }
+        ++published;
+    }
+
+    LogPrintf("[回放] 完成: %llu 帧 (bad %llu)\n",
+              static_cast<unsigned long long>(published),
+              static_cast<unsigned long long>(bad_lines));
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     std::unique_ptr<RemoteServer> remote;
     struct TelemetryDeleter {
@@ -222,6 +310,8 @@ int main(int argc, char* argv[]) {
     std::string config_path;
     std::string record_path;
     std::string input_port_override;
+    std::string replay_path;
+    double replay_speed = 1.0;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             show_help = true;
@@ -251,6 +341,19 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             input_port_override = argv[++i];
+        } else if (std::strcmp(argv[i], "--replay") == 0) {
+            if (i + 1 >= argc) {
+                LogPrintf("[错误] 缺失参数: --replay\n");
+                return 1;
+            }
+            replay_path = argv[++i];
+        } else if (std::strcmp(argv[i], "--replay-speed") == 0) {
+            if (i + 1 >= argc) {
+                LogPrintf("[错误] 缺失参数: --replay-speed\n");
+                return 1;
+            }
+            replay_speed = std::atof(argv[++i]);
+            if (replay_speed <= 0.0) replay_speed = 1.0;
         }
     }
 
@@ -262,6 +365,8 @@ int main(int argc, char* argv[]) {
         std::printf("  --config <路径>       指定配置文件\n");
         std::printf("  --record <路径>       记录每帧检测与决策到 JSONL\n");
         std::printf("  --input-port <端口>   指定串口，none 表示不打开串口（mock 模式）\n");
+        std::printf("  --replay <路径>       回放模式：读 trace.jsonl 并推送到遥测服务器\n");
+        std::printf("  --replay-speed <倍数> 回放速率（默认 1.0，仅 --replay 时有效）\n");
         std::printf("  --help, -h            显示本帮助\n");
         std::printf("  --version, -v         显示版本\n");
         return 0;
@@ -331,6 +436,13 @@ int main(int argc, char* argv[]) {
         telemetry.reset();
     } else {
         LogPrintf("[内核] 遥测服务器已启动: http://localhost:6601\n");
+    }
+
+    // --replay 模式：读 trace 并重放到遥测，不加载插件、不开串口、不进主循环。
+    // 早于此处的 config 读取已读取 raw_config（回放模式不需要，忽略之）。
+    if (!replay_path.empty()) {
+        const int rc = RunReplayMode(replay_path, replay_speed, telemetry.get());
+        return rc;
     }
 
     std::string effective_plugins_dir = plugins_dir;
