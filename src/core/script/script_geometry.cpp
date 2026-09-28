@@ -6,7 +6,7 @@
 
 bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
     if (!t.has || !me.valid) return false;
-    // 攻击区：椭圆扇段（X 前方 19px~300px 死角+弧线；Y 上方 80px / 下方 10px）
+    // 攻击区：椭圆扇段（X 前方 19px~280px；Y 上方 80px / 下方 20px）
     const float t_left = t.cx - t.w * 0.5f;
     const float t_right = t.cx + t.w * 0.5f;
     float x_near, x_far;

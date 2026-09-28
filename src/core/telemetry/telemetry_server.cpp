@@ -443,6 +443,10 @@ bool TelemetryServer::Start(int port) {
             res.set_content(kIndexHtml, "text/html; charset=utf-8");
         });
 
+        im->svr.Get("/favicon.ico", [](const httplib::Request&, httplib::Response& res) {
+            res.status = 204;
+        });
+
         // cpp-httplib 0.58 只有这一个 WebSocket 入口：连接建立后 handler
         // 在本线程内以 read() 阻塞直到连接结束。open/close 语义由
         // handler 进入/退出时的加锁插入/删除等价实现。
