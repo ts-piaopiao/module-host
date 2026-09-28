@@ -522,7 +522,20 @@ int main(int argc, char* argv[]) {
             frame_bundle.script.active_key = dbg.active_key;
             frame_bundle.script.desired_e = dbg.desired_e;
 
-            // dets 留空：UI-1b 不发送，UI-2 再填。
+            // 填充 dets：字段名与 recorder det 行一致，见 docs/ui-design.md §五。
+            frame_bundle.dets.reserve(detections.count);
+            for (uint32_t di = 0; di < detections.count; ++di) {
+                const auto& d = detections.items[di];
+                telemetry::DetectionSnapshot snap;
+                snap.cls  = static_cast<int>(d.cls);
+                snap.conf = d.conf;
+                snap.cx   = d.cx;
+                snap.cy   = d.cy;
+                snap.w    = d.w;
+                snap.h    = d.h;
+                snap.id   = static_cast<int>(d.track_id);
+                frame_bundle.dets.push_back(std::move(snap));
+            }
 
             LogPrintf("[telemetry] frame=%d state=%d facing=%d me_locked=%d target_locked=%d key=0x%02X e=%d\n",
                       frame_index,
