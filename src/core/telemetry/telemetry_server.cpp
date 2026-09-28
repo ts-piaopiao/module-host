@@ -512,8 +512,7 @@ void TelemetryServer::Stop() {
 
 void TelemetryServer::Publish(const telemetry::FrameBundle& bundle) {
     if (impl_ == nullptr) return;
-    Impl* im = impl_;
-    if (!im->running.load()) return;
+    if (!impl_->running.load()) return;
 
     std::string payload;
     try {
@@ -521,11 +520,18 @@ void TelemetryServer::Publish(const telemetry::FrameBundle& bundle) {
     } catch (...) {
         return;
     }
+    PublishRaw(payload);
+}
+
+void TelemetryServer::PublishRaw(const std::string& json_line) {
+    if (impl_ == nullptr) return;
+    Impl* im = impl_;
+    if (!im->running.load()) return;
 
     std::lock_guard<std::mutex> lock(im->clients_mutex);
     for (auto it = im->clients.begin(); it != im->clients.end();) {
         auto* ws = *it;
-        if (ws == nullptr || !ws->is_open() || !ws->send(payload)) {
+        if (ws == nullptr || !ws->is_open() || !ws->send(json_line)) {
             it = im->clients.erase(it);
         } else {
             ++it;
