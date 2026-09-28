@@ -86,6 +86,14 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     color: var(--muted);
     font-size: 12px;
   }
+  #view {
+    display: block;
+    margin: 24px auto 0;
+    background: #181818;
+    border: 1px solid #333;
+    width: 800px;
+    height: 450px;
+  }
 </style>
 </head>
 <body>
@@ -102,11 +110,13 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
   <span class="label">active_key</span>  <span class="value" id="key">--</span>
   <span class="label">desired_e</span>   <span class="value" id="e">--</span>
 </main>
+<canvas id="view"></canvas>
 <p id="reconnect-hint">断开后 1 秒自动重连。</p>
 <script>
 (function () {
   "use strict";
 
+  // ===== 状态面板 =====
   var STATE_NAMES = ["IDLE", "CHASE", "ATTACK", "ATTACK_TURN", "RECOVERY"];
   var ws = null;
   var reconnectTimer = null;
@@ -131,6 +141,171 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     return "0x" + s;
   }
 
+  // ===== 画布 =====
+  var CANVAS_W = 800;
+  var CANVAS_H = 450;
+
+  // 攻击区常量（与 ScriptConfig 同步，见 docs/ui-design.md §13.5）
+  var BAND_X_MIN     = 0.010;
+  var BAND_X_MAX     = 0.1458;
+  var BAND_Y_TOP     = -0.074;
+  var BAND_Y_BOT     = 0.019;
+  var BAND_Y_HALF_UP = 0.074;
+  var BAND_Y_HALF_DN = 0.019;
+
+  var canvas = null;
+  var ctx = null;
+
+  function initCanvas() {
+    canvas = el("view");
+    if (!canvas) return;
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(CANVAS_W * dpr);
+    canvas.height = Math.round(CANVAS_H * dpr);
+    ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+  }
+
+  function clearCanvas() {
+    if (!ctx) return;
+    ctx.fillStyle = "#181818";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  }
+
+  function drawGrid() {
+    if (!ctx) return;
+    ctx.strokeStyle = "#2a2a2a";
+    ctx.lineWidth = 1;
+    var i, x, y;
+    for (i = 1; i < 10; i++) {
+      x = (CANVAS_W * i) / 10;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, CANVAS_H);
+      ctx.stroke();
+    }
+    for (i = 1; i < 10; i++) {
+      y = (CANVAS_H * i) / 10;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(CANVAS_W, y);
+      ctx.stroke();
+    }
+  }
+
+  function drawBand(me_fx, me_fy, facing) {
+    if (!ctx) return;
+    var N = 32;
+    var i, t, y, yHalf, s, xOuter, cx, cy;
+
+    ctx.beginPath();
+
+    cx = me_fx * CANVAS_W + facing * BAND_X_MIN * CANVAS_W;
+    cy = me_fy * CANVAS_H + BAND_Y_TOP * CANVAS_H;
+    ctx.moveTo(cx, cy);
+
+    for (i = 0; i <= N; i++) {
+      t = i / N;
+      y = BAND_Y_TOP + (BAND_Y_BOT - BAND_Y_TOP) * t;
+      yHalf = (y < 0) ? BAND_Y_HALF_UP : BAND_Y_HALF_DN;
+      s = 1 - (y / yHalf) * (y / yHalf);
+      if (s < 0) s = 0;
+      xOuter = BAND_X_MAX * Math.sqrt(s);
+      if (xOuter < BAND_X_MIN) xOuter = BAND_X_MIN;
+      cx = me_fx * CANVAS_W + facing * xOuter * CANVAS_W;
+      cy = me_fy * CANVAS_H + y * CANVAS_H;
+      ctx.lineTo(cx, cy);
+    }
+
+    cx = me_fx * CANVAS_W + facing * BAND_X_MIN * CANVAS_W;
+    cy = me_fy * CANVAS_H + BAND_Y_BOT * CANVAS_H;
+    ctx.lineTo(cx, cy);
+
+    ctx.closePath();
+
+    ctx.fillStyle = "rgba(14, 99, 156, 0.18)";
+    ctx.fill();
+    ctx.strokeStyle = "#4fc3f7";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  function drawDets(dets) {
+    if (!ctx || !dets) return;
+    var i, d, left, top, width, height;
+    for (i = 0; i < dets.length; i++) {
+      d = dets[i];
+      left   = (d.cx - d.w * 0.5) * CANVAS_W;
+      top    = (d.cy - d.h * 0.5) * CANVAS_H;
+      width  = d.w * CANVAS_W;
+      height = d.h * CANVAS_H;
+      ctx.strokeStyle = (d.cls === 0) ? "#4ec9b0" : "#e0e0e0";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(left, top, width, height);
+    }
+  }
+
+  function drawMe(me_fx, me_fy) {
+    if (!ctx) return;
+    var x = me_fx * CANVAS_W;
+    var y = me_fy * CANVAS_H;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = "#4ec9b0";
+    ctx.fill();
+    ctx.strokeStyle = "#4ec9b0";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y);
+    ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10);
+    ctx.stroke();
+  }
+
+  function drawTarget(target_cx, me_fy) {
+    if (!ctx) return;
+    var x = target_cx * CANVAS_W;
+    var y = me_fy * CANVAS_H;
+    ctx.strokeStyle = "rgba(244, 135, 113, 0.5)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, CANVAS_H);
+    ctx.stroke();
+    ctx.strokeStyle = "#f48771";
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawScene(d) {
+    if (!ctx) return;
+    var s = d.script || {};
+
+    clearCanvas();
+    drawGrid();
+
+    if (s.me_locked === true) {
+      drawBand(s.me_fx, s.me_fy, s.facing === -1 ? -1 : 1);
+    }
+
+    if (d.dets) {
+      drawDets(d.dets);
+    }
+
+    if (s.me_locked === true) {
+      drawMe(s.me_fx, s.me_fy);
+    }
+
+    if (s.target_locked === true) {
+      drawTarget(s.target_cx, s.me_fy);
+    }
+  }
+
+  // ===== 渲染 =====
   function render(msg) {
     var d;
     try { d = JSON.parse(msg); } catch (err) { return; }
@@ -157,8 +332,11 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
 
     el("key").textContent = hex2(s.active_key);
     el("e").textContent   = s.desired_e ? "true" : "false";
+
+    drawScene(d);
   }
 
+  // ===== 连接 =====
   function scheduleReconnect() {
     if (reconnectTimer !== null) return;
     reconnectTimer = setTimeout(function () {
@@ -191,6 +369,7 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     };
   }
 
+  initCanvas();
   connect();
 })();
 </script>
