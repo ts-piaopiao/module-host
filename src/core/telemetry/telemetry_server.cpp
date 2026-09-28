@@ -14,19 +14,184 @@
 
 namespace {
 
-// UI-1c-1 占位页。内嵌在源文件里，避免运行目录依赖。
+// 状态面板页（UI-1c-2，占位页为 UI-1c-1）。内嵌在源文件里，避免运行目录依赖。
 const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><title>module-host monitor</title></head>
+<head>
+<meta charset="utf-8">
+<title>module-host monitor</title>
+<style>
+  :root {
+    --bg: #1e1e1e;
+    --fg: #d4d4d4;
+    --muted: #808080;
+    --ok: #4ec9b0;
+    --bad: #f48771;
+    --label: #9cdcfe;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 "Consolas", "Menlo", monospace;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #333;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  #conn {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 3px;
+  }
+  .conn-ok  { color: var(--bg); background: var(--ok); }
+  .conn-bad { color: var(--bg); background: var(--bad); }
+  main {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 6px 16px;
+    max-width: 640px;
+  }
+  .label {
+    color: var(--label);
+    text-align: right;
+  }
+  .value { color: var(--fg); }
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  .state-IDLE         { background: #3c3c3c; color: #d4d4d4; }
+  .state-CHASE        { background: #0e639c; color: #ffffff; }
+  .state-ATTACK       { background: #d16969; color: #ffffff; }
+  .state-ATTACK_TURN  { background: #c586c0; color: #ffffff; }
+  .state-RECOVERY     { background: #4ec9b0; color: #1e1e1e; }
+  .state-unknown      { background: #3c3c3c; color: #d4d4d4; }
+  #reconnect-hint {
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+</style>
+</head>
 <body>
-<h1>module-host monitor</h1>
-<p>UI-1c-1 placeholder — WebSocket /ws</p>
-<pre id="out">(waiting for data...)</pre>
+<header>
+  <h1>module-host monitor</h1>
+  <span id="conn" class="conn-bad">connecting…</span>
+</header>
+<main>
+  <span class="label">state</span>       <span class="value"><span id="state" class="badge state-unknown">--</span></span>
+  <span class="label">frame</span>       <span class="value" id="frame">--</span>
+  <span class="label">facing</span>      <span class="value" id="facing">--</span>
+  <span class="label">me</span>          <span class="value" id="me">--</span>
+  <span class="label">target</span>      <span class="value" id="target">--</span>
+  <span class="label">active_key</span>  <span class="value" id="key">--</span>
+  <span class="label">desired_e</span>   <span class="value" id="e">--</span>
+</main>
+<p id="reconnect-hint">断开后 1 秒自动重连。</p>
 <script>
-const ws = new WebSocket(`ws://${location.host}/ws`);
-ws.onmessage = (e) => { document.getElementById('out').textContent = e.data; };
-ws.onclose = () => { document.getElementById('out').textContent = '(disconnected)'; };
-ws.onerror = () => { document.getElementById('out').textContent = '(connection error)'; };
+(function () {
+  "use strict";
+
+  var STATE_NAMES = ["IDLE", "CHASE", "ATTACK", "ATTACK_TURN", "RECOVERY"];
+  var ws = null;
+  var reconnectTimer = null;
+
+  function el(id) { return document.getElementById(id); }
+
+  function setConn(text, ok) {
+    var e = el("conn");
+    e.textContent = text;
+    e.className = ok ? "conn-ok" : "conn-bad";
+  }
+
+  function fmt(n, digits) {
+    if (typeof n !== "number" || !isFinite(n)) return "--";
+    return n.toFixed(digits);
+  }
+
+  function hex2(n) {
+    if (typeof n !== "number") return "--";
+    var s = (n >>> 0).toString(16).toUpperCase();
+    if (s.length < 2) s = "0" + s;
+    return "0x" + s;
+  }
+
+  function render(msg) {
+    var d;
+    try { d = JSON.parse(msg); } catch (err) { return; }
+    var s = d.script || {};
+
+    el("frame").textContent = (typeof d.frame === "number") ? d.frame : "--";
+
+    var name = (typeof s.state === "number" && STATE_NAMES[s.state]) || "unknown";
+    var stateEl = el("state");
+    stateEl.textContent = name;
+    stateEl.className = "badge state-" + name;
+
+    if (s.facing === 1)       el("facing").textContent = "1 (→)";
+    else if (s.facing === -1) el("facing").textContent = "-1 (←)";
+    else                      el("facing").textContent = "--";
+
+    el("me").textContent = s.me_locked
+      ? "locked (" + fmt(s.me_fx, 3) + ", " + fmt(s.me_fy, 3) + ")"
+      : "unlocked";
+
+    el("target").textContent = s.target_locked
+      ? "locked cx=" + fmt(s.target_cx, 3)
+      : "unlocked";
+
+    el("key").textContent = hex2(s.active_key);
+    el("e").textContent   = s.desired_e ? "true" : "false";
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer !== null) return;
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      connect();
+    }, 1000);
+  }
+
+  function connect() {
+    setConn("connecting…", false);
+    var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+    ws = new WebSocket(url);
+
+    ws.onopen = function () {
+      setConn("connected", true);
+    };
+
+    ws.onmessage = function (ev) {
+      render(ev.data);
+    };
+
+    ws.onerror = function () {
+      // onclose 会随后触发
+    };
+
+    ws.onclose = function () {
+      setConn("disconnected — reconnecting…", false);
+      ws = null;
+      scheduleReconnect();
+    };
+  }
+
+  connect();
+})();
 </script>
 </body>
 </html>
