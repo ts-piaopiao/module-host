@@ -79,17 +79,17 @@
 
 ## 五、数据契约：FrameBundle v1
 
-**版本号**：`v1`，随每条消息发送，便于将来并存。
+**版本号**：`v1`，随每条消息发送。
 
 **格式**：JSON，单行，一帧一条。
 
-**字段**（草案，实现前需与 `recorder` 实际 JSONL 字段核对并对齐命名）：
+**字段**：
 
 ```json
 {
   "v": 1,
   "frame": 12345,
-  "now_ms": 1234567,
+  "t": 123456789,
   "script": {
     "state": 1,
     "facing": 1,
@@ -100,32 +100,32 @@
     "target_cx": 0.630,
     "active_key": 0,
     "desired_e": false
-  }
+  },
+  "dets": [
+    {"cls": 0, "conf": 0.90, "cx": 0.50, "cy": 0.70, "w": 0.05, "h": 0.10, "id": 1}
+  ]
 }
 ```
 
-**说明**：
+**字段说明**：
 
 | 字段 | 来源 | 备注 |
 |---|---|---|
 | `v` | 常量 1 | 契约版本，只加不改 |
-| `frame` | `world.frame_index` | |
-| `now_ms` | `world.now_ms` | |
-| `script.*` | `CppScriptDebugInfo` 9 字段 | **与现有调试接口完全对齐，不增删改名** |
+| `frame` | `frame_index` | |
+| `t` | 微秒，QPC 时间戳（与 recorder 的 `t` 同一来源） | 不加 `now_ms` |
+| `script.*` | `CppScriptDebugInfo` 9 字段 | **与现有调试接口完全对齐，不增删改名**（C2 硬约束） |
+| `dets[]` | `core_detections` | 字段名与 recorder `det` 行一致：`cls/conf/cx/cy/w/h/id` |
 
-**待核对项**（实现前必须确认，不能猜）：
+**与 recorder JSONL 的关系**：
 
-1. `recorder` 输出的 JSONL 中，决策相关字段（`dec`）的实际命名与结构。
-2. 检测框（`det`）是否需要在本期发送——v1 状态面板不需要，但为了二期画面叠加，
-   建议**现在就定好 `dets` 数组格式**，避免二期改契约。
+- **不是镜像**。recorder 是录制（只写必要字段），FrameBundle 是遥测（面向 UI）。
+- **字段名尽量对齐**，便于前端共用解析，但 FrameBundle 含 recorder `dec` 行没有的脚本状态字段（`state/facing/...`）。
+- `script.*` 与 `CppScriptDebugInfo` 逐字段对齐，来源见 §七。
 
-若 `dets` 现在就定，格式建议对齐 `core_detection`：
+**v1 实现时 `dets` 可选发送**（状态面板不需要），但契约先定好，二期画面叠加直接启用。
 
-```json
-"dets": [{"cls":0,"cx":0.5,"cy":0.7,"w":0.05,"h":0.1}]
-```
-
-**v1 实现时可选发送 `dets`**，但契约里先占位，前端忽略即可。
+**与 §十二 待办 1 的关系**：recorder 字段核对已完成，本契约已对齐实际 JSONL。
 
 ---
 
@@ -160,15 +160,51 @@ src/core/telemetry/
     └── style.css
 ```
 
-**依赖**：`cpp-httplib`（单头文件，无外部依赖，放 `third_party/`）。
+**依赖**：`cpp-httplib`（单头文件，MIT 许可证，放 `third_party/httplib/httplib.h`）。
+**WebSocket 需 `cpp-httplib >= 0.14`**。
 
-**`main.cpp` 改动**：仅加一行降频调用：
+**`ScriptHost` 新增转发**（不改 `CppScript` 本体）：
 
 ```cpp
-if (frame_index % 3 == 0) {          // 10Hz 降频（30fps 主循环）
-    telemetry_server.Publish(bundle);
+// script_host.h
+#include "cpp_script.h"    // 需要 CppScriptDebugInfo 类型
+
+// 读取脚本内部调试状态。空脚本时 out 保持默认值。
+void GetDebugInfo(CppScriptDebugInfo* out) const;
+```
+
+```cpp
+// script_host.cpp
+void ScriptHost::GetDebugInfo(CppScriptDebugInfo* out) const {
+    if (out == nullptr) return;
+    if (!impl_->script) return;
+    auto* cpp = dynamic_cast<CppScript*>(impl_->script.get());
+    if (cpp) cpp->GetDebugInfo(out);
 }
 ```
+
+**`main.cpp` 改动清单**（共 4 处）：
+
+1. include 区：`#include "telemetry/telemetry_server.h"`
+2. 主循环外（与 recorder 同层）：构造 `TelemetryServer telemetry;`
+   和 `telemetry.Start(6601);`（失败不阻塞，只是不开遥测）
+3. 主循环内 486 行后、488 行前，插入降频调用：
+   ```cpp
+   if (frame_index % 3 == 0) {
+       FrameBundle b;
+       b.frame = static_cast<uint64_t>(frame_index);
+       b.t = ...;                              // 与 recorder NowMicros 同源
+       script_host.GetDebugInfo(&b.script);
+       for (uint32_t di = 0; di < detections.count; ++di) { b.dets.push_back(...); }
+       telemetry.Publish(b);
+   }
+   ```
+4. `main.cpp` 的 `#else`（非 STAGE2）分支**不加**，该分支无帧循环
+
+**CMakeLists.txt 改动**：
+- 第 14 行 source 列表末尾加 `src/core/telemetry/telemetry_server.cpp`
+- `target_include_directories` 已有 `third_party/`，cpp-httplib 直接可用
+- 链接库已有 `ws2_32`，WebSocket 需要，无需新增
 
 **不碰**：`core_contract.h`、插件、`script/` 下任何文件、`output_manager`、`recorder`。
 
@@ -210,7 +246,9 @@ class FileSource {   // 二期
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **UI-0** | 本文档冻结 | 文档评审通过，契约定版 |
-| **UI-1** | core 遥测服务器 + 前端状态面板 | 浏览器打开 `localhost:6601` 实时看到 state 变化 |
+| **UI-1a** | 修正本文档（5 处不符） | 文档 commit |
+| **UI-1b** | `ScriptHost::GetDebugInfo` 转发 + main.cpp 取得脚本状态 | run_all 全绿 + 6 fixture IDENTICAL |
+| **UI-1c** | cpp-httplib + telemetry 模块 + 前端 | 浏览器 `localhost:6601` 看到 state 变化 |
 | **UI-2** | 画面叠加（检测框 / me / target / 攻击区） | 叠加位置与 YOLO 输出一致 |
 | **UI-3** | FileSource 接 JSONL（场景 D） | 与 `script_replay` 回放帧一致 |
 | **UI-4** | 控制通道（场景 C） | 权限与安全评审通过 |
@@ -219,15 +257,23 @@ class FileSource {   // 二期
 
 ---
 
-## 十、验收标准（UI-1）
+## 十、验收标准（UI-1c）
 
 ```text
 1. core.exe 启动后，浏览器访问 http://localhost:6601 能打开页面。
 2. 页面每帧显示 state / facing / me_locked / target_locked / active_key。
 3. 断开 UI（关浏览器），core 不崩溃，继续跑。
 4. 停掉 core，UI 显示"连接断开"，不崩溃。
-5. run_all.ps1 11 步仍全绿（遥测不影响验收流程）。
+5. run_all.ps1 11 步仍全绿。
 6. 不开启 UI 时，core 行为与基线逐字节一致（6 fixture IDENTICAL）。
+
+**UI-1b 验收标准（更早一步）**：
+
+```text
+1. run_all.ps1 11 步全绿。
+2. 6 fixture MH_SCRIPT_SEED=42 逐字节 IDENTICAL。
+3. main.cpp 能从 script_host.GetDebugInfo 拿到 state/facing/... 9 字段，
+   仅 printf 打印验证，不接 telemetry。
 ```
 
 **第 6 条是关键**：遥测是旁路，不能改变脚本行为。
@@ -244,16 +290,22 @@ class FileSource {   // 二期
 | P3 依赖单向 | `telemetry` ← `main.cpp`，不反向 |
 | P4 不过度设计 | 无框架、无鉴权、无画面叠加 |
 | P6 每步独立 commit | UI-0 … UI-4 各自独立 |
+| **C2 硬约束** | `script.*` 9 字段与 `CppScriptDebugInfo` 逐字段对齐，不增删改名 |
 
 ---
 
 ## 十二、待办（实现前必须解决）
 
-1. **核对 `recorder` JSONL 字段**，确认 `FrameBundle` 命名与之对齐。
-2. **确认 `cpp-httplib` 版本**与许可证，落 `third_party/`。
-3. **确认端口 6601/6602 未被占用**。
-4. **确认 `main.cpp` 中降频点位置**，不改变原有控制流。
-5. **与执行 AI 约定**：任何与本文档不符处，停止并贴回，不猜。
+1. ~~核对 `recorder` JSONL 字段~~ —— **已完成**，见 §五。
+2. **引入 `cpp-httplib`**：版本 ≥ 0.14（需 WebSocket），放
+   `third_party/httplib/httplib.h`。执行 AI 无法联网，需人工放置。
+3. **确认端口 6601/6602 未被占用** —— 已确认 6601 空闲。
+4. **`main.cpp` 降频点**：主循环 486–490 行之间，仅 STAGE2 分支。
+5. **确认 `t` 时间戳来源**：与 recorder `NowMicros()` 同源，
+   建议在 telemetry 模块内自带一个同样的 QPC 微秒函数，
+   或复用（需评估是否把 `NowMicros` 从 `recorder.cpp` 的匿名
+   namespace 提出来）。
+6. **与执行 AI 约定**：任何与本文档不符处，停止并贴回，不猜。
 
 ---
 
