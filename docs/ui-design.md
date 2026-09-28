@@ -266,6 +266,7 @@ class FileSource {   // 二期
 4. 停掉 core，UI 显示"连接断开"，不崩溃。
 5. run_all.ps1 11 步仍全绿。
 6. 不开启 UI 时，core 行为与基线逐字节一致（6 fixture IDENTICAL）。
+```
 
 **UI-1b 验收标准（更早一步）**：
 
