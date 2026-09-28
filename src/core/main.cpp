@@ -5,6 +5,7 @@
 #include "remote_server.h"
 #include "script/script_host.h"
 #include "recorder.h"
+#include "telemetry/telemetry_protocol.h"
 #include "output_manager.h"
 
 #include <cstdarg>
@@ -483,6 +484,39 @@ int main(int argc, char* argv[]) {
             for (const auto& ev : events) {
                 recorder->RecordHuman(static_cast<uint64_t>(frame_index), ev);
             }
+        }
+
+        // 遥测：每 3 帧（~10Hz）组装一帧 FrameBundle 并打印。
+        // UI-1b 阶段仅 printf 验证；UI-1c 将改为 telemetry.Publish(frame_bundle)。
+        if (frame_index % 3 == 0) {
+            telemetry::FrameBundle frame_bundle;
+            frame_bundle.frame = static_cast<uint64_t>(frame_index);
+            frame_bundle.t = telemetry::NowMicros();
+
+            // CppScriptDebugInfo → telemetry::ScriptSnapshot 逐字段拷贝。
+            // 两结构字段名与顺序严格一致；C2 硬约束保证 9 字段不增删改名。
+            CppScriptDebugInfo dbg;
+            script_host.GetDebugInfo(&dbg);
+            frame_bundle.script.state = dbg.state;
+            frame_bundle.script.facing = dbg.facing;
+            frame_bundle.script.me_locked = dbg.me_locked;
+            frame_bundle.script.me_fx = dbg.me_fx;
+            frame_bundle.script.me_fy = dbg.me_fy;
+            frame_bundle.script.target_locked = dbg.target_locked;
+            frame_bundle.script.target_cx = dbg.target_cx;
+            frame_bundle.script.active_key = dbg.active_key;
+            frame_bundle.script.desired_e = dbg.desired_e;
+
+            // dets 留空：UI-1b 不发送，UI-2 再填。
+
+            LogPrintf("[telemetry] frame=%d state=%d facing=%d me_locked=%d target_locked=%d key=0x%02X e=%d\n",
+                      frame_index,
+                      frame_bundle.script.state,
+                      frame_bundle.script.facing,
+                      frame_bundle.script.me_locked ? 1 : 0,
+                      frame_bundle.script.target_locked ? 1 : 0,
+                      frame_bundle.script.active_key,
+                      frame_bundle.script.desired_e ? 1 : 0);
         }
 
         if (decision_decided.out_count == 0) {

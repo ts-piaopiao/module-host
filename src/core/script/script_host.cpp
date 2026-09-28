@@ -46,3 +46,12 @@ bool ScriptHost::GetMeLock(float* fx, float* fy) const {
     if (!impl_->script) return false;
     return impl_->script->GetMeLock(fx, fy);
 }
+
+void ScriptHost::GetDebugInfo(CppScriptDebugInfo* out) const {
+    if (out == nullptr) return;
+    if (!impl_->script) return;
+    auto* cpp = dynamic_cast<CppScript*>(impl_->script.get());
+    if (cpp != nullptr) {
+        cpp->GetDebugInfo(out);
+    }
+}

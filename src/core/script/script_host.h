@@ -1,6 +1,7 @@
 #pragma once
 
 #include "iscript.h"
+#include "cpp_script.h"   // CppScriptDebugInfo
 #include <memory>
 #include <string>
 
@@ -30,6 +31,10 @@ public:
     // 查询脚本内部锁定的 me 位置（用于 recorder）。
     // 空脚本返回 false。
     bool GetMeLock(float* fx, float* fy) const;
+
+    // 读取脚本内部调试状态（用于 telemetry）。
+    // 空脚本或非 CppScript 实现时，out 保持默认值。
+    void GetDebugInfo(CppScriptDebugInfo* out) const;
 
 private:
     struct Impl;
