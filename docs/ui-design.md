@@ -153,11 +153,11 @@
 ```
 src/core/telemetry/
 ├── telemetry_protocol.h      FrameBundle 结构定义（冻结）
-├── telemetry_server.h/.cpp   HTTP + WebSocket 服务器
-└── static/                   前端资源（HTML/JS/CSS）
-    ├── index.html
-    ├── app.js
-    └── style.css
+└── telemetry_server.h/.cpp   HTTP + WebSocket 服务器
+
+前端资源内嵌在 telemetry_server.cpp 的 raw string literal 中
+（不挂载 static/ 目录，避免运行目录依赖）。
+UI-1c-1 内置占位页；UI-1c-2 换成正式状态面板。
 ```
 
 **依赖**：`cpp-httplib`（单头文件，MIT 许可证，放 `third_party/httplib/httplib.h`）。
@@ -222,6 +222,9 @@ style.css
 ```
 
 **无框架**。状态面板 = 一组 DOM 节点 + 每帧 `textContent` 更新。
+
+前端源码（index.html/app.js/style.css）内嵌到 server cpp；
+二期若复杂化再拆为 `static/` 目录。
 
 **DataSource 抽象**（前端侧）：
 

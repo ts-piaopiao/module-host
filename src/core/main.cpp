@@ -6,6 +6,7 @@
 #include "script/script_host.h"
 #include "recorder.h"
 #include "telemetry/telemetry_protocol.h"
+#include "telemetry/telemetry_server.h"
 #include "output_manager.h"
 
 #include <cstdarg>
@@ -203,12 +204,18 @@ bool ParseAndCheckMeta(const char* meta, const char* expected_kind, std::string*
 
 int main(int argc, char* argv[]) {
     std::unique_ptr<RemoteServer> remote;
+    struct TelemetryDeleter {
+        void operator()(TelemetryServer* t) const {
+            if (t) { t->Stop(); delete t; }
+        }
+    };
     struct RecorderDeleter {
         void operator()(Recorder* r) const {
             if (r) { r->Stop(); delete r; }
         }
     };
     std::unique_ptr<Recorder, RecorderDeleter> recorder;
+    std::unique_ptr<TelemetryServer, TelemetryDeleter> telemetry;
     bool show_help = false;
     bool show_version = false;
     std::string plugins_dir;
@@ -316,6 +323,14 @@ int main(int argc, char* argv[]) {
         } else {
             LogPrintf("[内核] 记录已启动: %s\n", record_path.c_str());
         }
+    }
+
+    telemetry.reset(new TelemetryServer());
+    if (!telemetry->Start(6601)) {
+        LogPrintf("[内核] 遥测服务器启动失败（端口 6601 可能被占用），已禁用遥测\n");
+        telemetry.reset();
+    } else {
+        LogPrintf("[内核] 遥测服务器已启动: http://localhost:6601\n");
     }
 
     std::string effective_plugins_dir = plugins_dir;
@@ -517,6 +532,10 @@ int main(int argc, char* argv[]) {
                       frame_bundle.script.target_locked ? 1 : 0,
                       frame_bundle.script.active_key,
                       frame_bundle.script.desired_e ? 1 : 0);
+
+            if (telemetry) {
+                telemetry->Publish(frame_bundle);
+            }
         }
 
         if (decision_decided.out_count == 0) {
