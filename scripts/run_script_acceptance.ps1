@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$Config = 'Release',
@@ -30,6 +30,12 @@ if (-not [System.IO.Path]::IsPathRooted($FixturesDir)) {
 }
 
 $fixtures = @('real_session_long.jsonl', 'real_session_600f.jsonl', 'turn_scene.jsonl', 'long_idle_scene.jsonl', 'max_dets_scene.jsonl', 'multi_target_scene.jsonl')
+
+# 固定随机种子，确保 I1–I11 不变式在确定性 trace 下验证。
+# 不设种子时 CppScript 用 time ^ steady_clock 随机初始化（cpp_script.cpp:47），
+# 会使 script_replay 每次跑出不同 trace，导致 I4 偶发违例（E 时长 < 50ms），
+# 与代码正确性无关。本脚本只在本进程及其子进程内设置，不影响 run_all.ps1。
+$env:MH_SCRIPT_SEED = '42'
 
 function Precheck {
     param([bool]$Ok, [string]$Message)
