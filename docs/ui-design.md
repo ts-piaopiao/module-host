@@ -252,7 +252,10 @@ class FileSource {   // 二期
 | **UI-1a** | 修正本文档（5 处不符） | 文档 commit |
 | **UI-1b** | `ScriptHost::GetDebugInfo` 转发 + main.cpp 取得脚本状态 | run_all 全绿 + 6 fixture IDENTICAL |
 | **UI-1c** | cpp-httplib + telemetry 模块 + 前端 | 浏览器 `localhost:6601` 看到 state 变化 |
-| **UI-2** | 画面叠加（检测框 / me / target / 攻击区） | 叠加位置与 YOLO 输出一致 |
+| **UI-2** | 画面叠加（检测框 / me / target / 攻击区，B1 抽象画布） | 见 §13 |
+| **UI-2a** | 设计文档 | 已冻结（本文档） |
+| **UI-2b** | 后端填 `dets` | 6 fixture IDENTICAL |
+| **UI-2c** | 前端 canvas | 人眼确认元素显示正确 |
 | **UI-3** | FileSource 接 JSONL（场景 D） | 与 `script_replay` 回放帧一致 |
 | **UI-4** | 控制通道（场景 C） | 权限与安全评审通过 |
 
@@ -313,4 +316,196 @@ class FileSource {   // 二期
 
 ---
 
-**文档完**。
+---
+
+## 十三、UI-2 设计：画面叠加（抽象画布）
+
+**状态**：设计冻结中，UI-2b/2c 待实现。
+
+### 13.1 目标与非目标
+
+**目标**：在状态面板下方加一块 canvas，以归一化坐标系绘制
+检测框、me 点、target 点、攻击区椭圆，让脚本的空间决策可视化。
+
+**非目标**：
+
+- 不传真实视频帧（B2 方案）。
+- 不接入 `remote_server` 的视频流（B3 方案，后续评估）。
+- 不做时间回溯、不显示历史帧。
+- 不做缩放/平移交互。
+
+**采用 B1 方案**（抽象 2D 画布）。
+
+### 13.2 画布
+
+| 项 | 值 |
+|---|---|
+| CSS 尺寸 | 800×450（16:9） |
+| 内部分辨率 | `800 * dpr × 450 * dpr`，`ctx.scale(dpr, dpr)` |
+| DPR 探测 | `window.devicePixelRatio \|\| 1` |
+| 背景 | `#181818`（比页面 `#1e1e1e` 略深） |
+| 网格 | 每 0.1 归一化一条线，颜色 `#2a2a2a` |
+
+### 13.3 坐标映射
+
+**归一化直接映射，无需分辨率**：
+
+```
+canvas_x = cx * canvas_css_width
+canvas_y = cy * canvas_css_height
+```
+
+**16:9 保真性质**：因为 canvas 宽高比与 1920×1080 相同，
+按各自维度映射后，像素坐标下圆形的物体在画布上仍是圆形。
+
+**证明**：像素半径 r=100 的圆，归一化半径 x 方向 `100/1920`、
+y 方向 `100/1080`；画布上 x 像素 = `(100/1920)*800 = 41.7`、
+y 像素 = `(100/1080)*450 = 41.7`，相等。
+
+**y 方向**：与屏幕坐标一致，y 向下增大。`me.fy` 是脚底中心，
+所以 me 点显示在偏低位置，攻击区主要在屏幕上方。
+
+### 13.4 绘制元素
+
+| 元素 | 数据源 | 颜色 | 绘制方式 |
+|---|---|---|---|
+| 背景网格 | 常量 | `#2a2a2a` | 每 0.1 一条线 |
+| 检测框 | `dets[]` | 见下表 | 矩形边框 1px |
+| me 点 | `script.me_fx/fy` | `#4ec9b0` | 实心圆 r=5 + 十字 |
+| target 位置线 | `script.target_cx` | `#f48771` | 竖直虚线，全高 |
+| target 点 | `(target_cx, me_fy)` | `#f48771` | 空心圆 r=6，虚线描边 |
+| 攻击区 | `script.me_fx/fy/facing` + 常量 | 半透明 `#0e639c` 填充 + `#4fc3f7` 描边 | 多边形路径 |
+
+**检测框按 cls 着色**：
+
+| cls | 名称 | 颜色 |
+|---|---|---|
+| 0 | me | `#4ec9b0`（青绿） |
+| 1 | monster | `#e0e0e0`（灰白） |
+
+**绘制条件**（缺则跳过，不报错）：
+
+- `script.me_locked == true` → 画 me 点、攻击区
+- `script.target_locked == true` → 画 target 位置线、target 点
+- `dets` 非空 → 画检测框
+- 其它情况对应元素跳过
+
+**dets 过滤**：前端不做过滤，信任 `yolo_policy` 已过滤
+（面积、边界在 policy 里已处理）。全部显示。
+
+**target 点 y 坐标**：`CppScriptDebugInfo` 只有 `target_cx`，
+没有 `target_cy`。用 `me_fy` 近似——perception 里
+`kSamePlatY = 0.028` 意味着 target 与 me 的脚底 y 差 ≤ 0.028。
+UI-2 不改协议，用虚线圆表达"位置近似"。
+
+### 13.5 攻击区椭圆绘制规范
+
+**几何定义**（源自 `script_geometry.cpp`，与 `IsInBand` 逐条对应）：
+
+以 `me.fx / me.fy` 为原点，facing 方向为 x 正方向：
+
+| 边界 | 公式 |
+|---|---|
+| 内边界 x_min | `kBandXMin = 0.010` |
+| 外边界 x_max(y) | `kBandXMaxSame * sqrt(1 - (y/y_half)^2)` |
+| 上边界 y_top | `kBandYMin = -0.074` |
+| 下边界 y_bot | `kBandYMax = +0.019` |
+| 上侧半短轴 y_half(y<0) | `-kBandYMin = 0.074` |
+| 下侧半短轴 y_half(y>0) | `kBandYMax = 0.019` |
+
+**注意**：上下半短轴不同，所以**不是椭圆**，是"上下不对称的双弧扇段"。
+几何形状是：x_min 竖线 + 上下不对称椭圆弧。
+
+**关键常量**（前端硬编码，与 `ScriptConfig` 同值）：
+
+```js
+var BAND_X_MIN     = 0.010;
+var BAND_X_MAX     = 0.1458;
+var BAND_Y_TOP     = -0.074;
+var BAND_Y_BOT     = 0.019;
+var BAND_Y_HALF_UP = 0.074;   // = -BAND_Y_TOP
+var BAND_Y_HALF_DN = 0.019;   // = BAND_Y_BOT
+```
+
+前端**硬编码**这些值，不通过遥测传输——它们属于"脚本几何契约"，
+变化频率极低（重构期间从未变过）。若将来 `ScriptConfig` 改了这些常量，
+前端需同步。这一风险记入 §13.7 的"协议-前端同步契约"。
+
+**绘制步骤**：
+
+1. 采样外弧：对 `y ∈ [BAND_Y_TOP, BAND_Y_BOT]` 取 N=32 个点
+   - `y_half = (y < 0) ? BAND_Y_HALF_UP : BAND_Y_HALF_DN`
+   - `x_outer = BAND_X_MAX * sqrt(1 - (y/y_half)^2)`
+   - 若 `x_outer < BAND_X_MIN`，跳过（理论上不会发生，
+     因为 `(BAND_X_MIN/BAND_X_MAX)^2 = 0.0047 << 1`）
+2. 内边界：从 `(BAND_X_MIN, BAND_Y_TOP)` 到 `(BAND_X_MIN, BAND_Y_BOT)`
+3. 组合为闭合多边形：
+   ```
+   起点: (x_min, y_top)
+   → 沿 x_min 竖线到 (x_min, y_bot)
+   → 沿外弧反向采样回到 (x_min, y_top)
+   → closePath
+   ```
+4. 坐标变换：
+   - `canvas_x = me_fx * W + facing * norm_x * W`
+   - `canvas_y = me_fy * H + norm_y * H`
+5. 填充 + 描边
+
+**归一化到像素的转换**：全部乘 canvas CSS 尺寸，按各自维度。
+
+**若 `me_locked == false`**：不画攻击区。
+
+### 13.6 布局
+
+```
+┌──────────────────────────────────────┐
+│  module-host monitor      [connected]│
+├──────────────────────────────────────┤
+│       state   [IDLE]                 │
+│       frame   1234                   │
+│       facing  1 (→)                  │
+│       me      locked (0.50, 0.72)    │
+│       target  locked cx=0.63         │
+│       active_key  0x00               │
+│       desired_e   false              │
+├──────────────────────────────────────┤
+│  ┌────────────────────────────────┐  │
+│  │                                │  │
+│  │       [canvas 800×450]          │  │
+│  │                                │  │
+│  └────────────────────────────────┘  │
+└──────────────────────────────────────┘
+```
+
+- 状态面板保持现有布局（grid 两列，max-width 640）
+- canvas 居中，`margin: 24px auto 0`
+- 页面总宽 `max-width: 840px`
+
+**移动端**：不做适配（本地调试工具，假定桌面）。
+
+### 13.7 实现拆分
+
+| 子步 | 内容 | 验收 |
+|---|---|---|
+| **UI-2a** | 本文档（设计冻结） | 文档 commit |
+| **UI-2b** | 后端填 `dets`：`main.cpp` 组装 bundle 时遍历 `detections`，填 `frame_bundle.dets` | 6 fixture IDENTICAL + run_all 全绿 + 浏览器收到非空 `dets` |
+| **UI-2c** | 前端 canvas：内嵌 HTML 加 `<canvas>` + 绘制逻辑 | 人眼确认元素显示正确 |
+
+**协议-前端同步契约**（UI-2b 起生效）：
+
+- 前端硬编码 §13.5 的 5 个常量。
+- 若 `ScriptConfig` 中这 5 个常量发生变化，**必须同步更新前端**。
+- 前端不加"从遥测读常量"的机制（P4 不过度设计）。
+
+### 13.8 UI-2c 前端实现约束
+
+- 继续无框架（原生 JS + Canvas）
+- 继续 ES5 语法（`var` / 无箭头 / 无模板字符串）
+- Canvas API 用 `getContext('2d')`
+- 绘制在 `render(msg)` 中，每收到一帧消息重绘一次
+- 无动画循环、无 `requestAnimationFrame`（数据驱动，收到就画）
+- 无外部资源
+
+---
+
+**文档完（含 UI-2）。**
