@@ -94,6 +94,46 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     width: 800px;
     height: 450px;
   }
+  #controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px auto 0;
+    max-width: 800px;
+    padding: 8px 12px;
+    background: #252525;
+    border: 1px solid #333;
+    border-radius: 3px;
+  }
+  #controls.hidden { display: none; }
+  #controls button {
+    background: #3c3c3c;
+    color: var(--fg);
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  #controls button:hover { background: #4a4a4a; }
+  #controls button:disabled { opacity: 0.4; cursor: default; }
+  #seek {
+    flex: 1;
+    min-width: 120px;
+  }
+  #time {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  #speed {
+    background: #3c3c3c;
+    color: var(--fg);
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 3px 6px;
+    font: inherit;
+  }
 </style>
 </head>
 <body>
@@ -111,6 +151,19 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
   <span class="label">desired_e</span>   <span class="value" id="e">--</span>
 </main>
 <canvas id="view"></canvas>
+<div id="controls" class="hidden">
+  <button id="btn-play" title="播放/暂停">▶</button>
+  <button id="btn-prev" title="上一帧">⏮</button>
+  <button id="btn-next" title="下一帧">⏭</button>
+  <input id="seek" type="range" min="0" max="0" value="0">
+  <span id="time">0 / 0</span>
+  <select id="speed">
+    <option value="0.5">0.5x</option>
+    <option value="1" selected>1x</option>
+    <option value="2">2x</option>
+    <option value="4">4x</option>
+  </select>
+</div>
 <p id="reconnect-hint">断开后 1 秒自动重连。</p>
 <script>
 (function () {
@@ -201,7 +254,6 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     var i, t, y, yHalf, s, xOuter, cx, cy;
 
     ctx.beginPath();
-
     cx = me_fx * CANVAS_W + facing * BAND_X_MIN * CANVAS_W;
     cy = me_fy * CANVAS_H + BAND_Y_TOP * CANVAS_H;
     ctx.moveTo(cx, cy);
@@ -224,7 +276,6 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     ctx.lineTo(cx, cy);
 
     ctx.closePath();
-
     ctx.fillStyle = "rgba(14, 99, 156, 0.18)";
     ctx.fill();
     ctx.strokeStyle = "#4fc3f7";
@@ -234,13 +285,12 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
 
   function drawDets(dets) {
     if (!ctx || !dets) return;
-    var i, d, left, top, width, height;
-    for (i = 0; i < dets.length; i++) {
-      d = dets[i];
-      left   = (d.cx - d.w * 0.5) * CANVAS_W;
-      top    = (d.cy - d.h * 0.5) * CANVAS_H;
-      width  = d.w * CANVAS_W;
-      height = d.h * CANVAS_H;
+    for (var i = 0; i < dets.length; i++) {
+      var d = dets[i];
+      var left   = (d.cx - d.w * 0.5) * CANVAS_W;
+      var top    = (d.cy - d.h * 0.5) * CANVAS_H;
+      var width  = d.w * CANVAS_W;
+      var height = d.h * CANVAS_H;
       ctx.strokeStyle = (d.cls === 0) ? "#4ec9b0" : "#e0e0e0";
       ctx.lineWidth = 1;
       ctx.strokeRect(left, top, width, height);
@@ -305,10 +355,8 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     }
   }
 
-  // ===== 渲染 =====
-  function render(msg) {
-    var d;
-    try { d = JSON.parse(msg); } catch (err) { return; }
+  // ===== 单帧渲染 =====
+  function renderFrame(d) {
     var s = d.script || {};
 
     el("frame").textContent = (typeof d.frame === "number") ? d.frame : "--";
@@ -336,6 +384,156 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     drawScene(d);
   }
 
+  // ===== 回放控制（UI-3c-2） =====
+  // 三态机：live（实时，直接渲染）/ buffering（缓存中）/ playing（本地播放）
+  var FRAME_MS = 33;          // trace 帧间隔 ~33ms（30fps）
+  var mode = "live";
+  var buffer = [];
+  var playIdx = 0;            // 下一帧要渲染的索引
+  var playSpeed = 1.0;
+  var playTimer = null;
+  var playing = false;
+
+  function setMode(m) {
+    mode = m;
+    var ctl = el("controls");
+    if (!ctl) return;
+    if (m === "playing") ctl.classList.remove("hidden");
+    else                 ctl.classList.add("hidden");
+  }
+
+  function updateControls() {
+    var total = buffer.length;
+    var cur = playIdx > 0 ? playIdx - 1 : 0;
+    if (total > 0 && cur >= total) cur = total - 1;
+
+    el("time").textContent = cur + " / " + total;
+
+    var seek = el("seek");
+    seek.max = total > 0 ? (total - 1) : 0;
+    seek.value = cur;
+
+    el("btn-play").textContent = playing ? "⏸" : "▶";
+    el("btn-prev").disabled = (cur <= 0);
+    el("btn-next").disabled = (total === 0) || (cur >= total - 1);
+  }
+
+  function playStep() {
+    if (!playing) return;
+    if (playIdx >= buffer.length) {
+      playing = false;
+      updateControls();
+      return;
+    }
+    renderFrame(buffer[playIdx]);
+    playIdx++;
+    updateControls();
+    playTimer = setTimeout(playStep, FRAME_MS / playSpeed);
+  }
+
+  function playStart() {
+    if (playing) return;
+    if (buffer.length === 0) return;
+    if (playIdx >= buffer.length) playIdx = 0;
+    playing = true;
+    updateControls();
+    playStep();
+  }
+
+  function playPause() {
+    if (playing) {
+      playing = false;
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      updateControls();
+    } else {
+      playStart();
+    }
+  }
+
+  function stepPrev() {
+    playing = false;
+    if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+    var cur = playIdx > 0 ? playIdx - 1 : 0;
+    if (cur > 0) cur--;
+    if (buffer.length > 0) {
+      renderFrame(buffer[cur]);
+      playIdx = cur + 1;
+      updateControls();
+    }
+  }
+
+  function stepNext() {
+    playing = false;
+    if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+    if (playIdx < buffer.length) {
+      renderFrame(buffer[playIdx]);
+      playIdx++;
+      updateControls();
+    }
+  }
+
+  function seekTo(idx) {
+    playing = false;
+    if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+    if (buffer.length === 0) return;
+    if (idx < 0) idx = 0;
+    if (idx >= buffer.length) idx = buffer.length - 1;
+    renderFrame(buffer[idx]);
+    playIdx = idx + 1;
+    updateControls();
+  }
+
+  function bindControls() {
+    var btnPlay = el("btn-play");
+    var btnPrev = el("btn-prev");
+    var btnNext = el("btn-next");
+    var seek = el("seek");
+    var speed = el("speed");
+
+    if (btnPlay) btnPlay.onclick = playPause;
+    if (btnPrev) btnPrev.onclick = stepPrev;
+    if (btnNext) btnNext.onclick = stepNext;
+    if (seek) seek.oninput = function () {
+      seekTo(parseInt(seek.value, 10));
+    };
+    if (speed) speed.onchange = function () {
+      playSpeed = parseFloat(speed.value) || 1.0;
+    };
+  }
+
+  // ===== 消息分流 =====
+  function handleMessage(raw) {
+    var d;
+    try { d = JSON.parse(raw); } catch (err) { return; }
+
+    if (d.v === 0) {
+      if (d.meta === "replay_begin") {
+        playing = false;
+        if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+        buffer = [];
+        playIdx = 0;
+        setMode("buffering");
+        updateControls();
+      } else if (d.meta === "replay_end") {
+        setMode("playing");
+        updateControls();
+        playStart();
+      }
+      return;
+    }
+
+    if (d.v === 1) {
+      if (mode === "buffering") {
+        buffer.push(d);
+        updateControls();
+      } else if (mode === "live") {
+        renderFrame(d);
+      }
+      // playing 中收到新帧：忽略（core 一次推完才发 replay_end）
+      return;
+    }
+  }
+
   // ===== 连接 =====
   function scheduleReconnect() {
     if (reconnectTimer !== null) return;
@@ -352,10 +550,20 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
 
     ws.onopen = function () {
       setConn("connected", true);
+      if (mode === "playing" && buffer.length > 0) {
+        // 离线保留的回放状态：一旦连上新的 core（多半是实时模式）就清空，
+        // 避免旧回放帧污染实时流（5.6 要求）。回放 core 重连会随后收到
+        // replay_begin，重新进入 buffering。
+        playing = false;
+        if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+        buffer = [];
+        playIdx = 0;
+        setMode("live");
+      }
     };
 
     ws.onmessage = function (ev) {
-      render(ev.data);
+      handleMessage(ev.data);
     };
 
     ws.onerror = function () {
@@ -365,11 +573,24 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
     ws.onclose = function () {
       setConn("disconnected — reconnecting…", false);
       ws = null;
+      if (mode === "playing") {
+        // 回放已完整缓存（replay_end 已到）：core 随即退出属正常，
+        // 不清理回放状态，控制条与本地 buffer 保留，供离线核验/继续播放。
+        updateControls();
+      } else {
+        // live / buffering 中断线：清理回放状态，回到 live
+        playing = false;
+        if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+        buffer = [];
+        playIdx = 0;
+        setMode("live");
+      }
       scheduleReconnect();
     };
   }
 
   initCanvas();
+  bindControls();
   connect();
 })();
 </script>
