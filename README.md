@@ -130,7 +130,7 @@ real_test.ini 示例：
     capture_height = 1080
     capture_fps = 30
     capture_format = auto
-    input_port = COM6
+    input_port = COM4
     input_baud = 115200
 
 ### 真机验收（可选）
@@ -147,7 +147,7 @@ real_test.ini 示例：
 ### 前置条件
 
 - 采集卡插在 USB 口，被系统识别为视频采集设备
-- 串口设备插在 COM6（或配置里指定的端口），未被子程序占用
+- 串口设备插在 COM4（或配置里指定的端口），未被子程序占用
 - 真实插件只在 BUILD_STAGE2_PLUGINS=ON 时构建
 - 假插件（plugins/）仍然存在，用于无硬件环境下的回归
 
@@ -207,7 +207,7 @@ real_test.ini 示例：
 | `capture_height` | 整数 | 期望高度，默认 1080 |
 | `capture_fps` | 整数 | 期望帧率，默认 30 |
 | `capture_format` | 字符串 | yuy2 / mjpg / nv12 / auto，默认 auto |
-| `input_port` | 字符串 | 串口号，如 COM6，默认 COM6 |
+| `input_port` | 字符串 | 串口号，如 COM4，默认 COM4 |
 | `input_baud` | 整数 | 波特率，默认 115200 |
 
 规则：

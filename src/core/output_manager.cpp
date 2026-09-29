@@ -44,7 +44,7 @@ bool ParseInt(const std::string& text, int* out) {
 
 void ParseConfig(const std::string& config, std::string* port, DWORD* baud,
                  int* min_hold_min_ms, int* min_hold_max_ms, int* min_gap_ms) {
-    port->assign("COM6");
+    port->assign("COM4");
     *baud = 115200;
     *min_hold_min_ms = 70;
     *min_hold_max_ms = 90;

@@ -46,7 +46,7 @@ Write-Output "[警告] 本脚本会通过串口向系统发送真实的键盘输
 Write-Output "[警告] 默认策略每帧按一次 I 键。"
 Write-Output "[警告] 运行前请："
 Write-Output "[警告]   1. 打开记事本，鼠标点击输入区让光标在闪"
-Write-Output "[警告]   2. 确认 COM6 未被其他程序占用"
+Write-Output "[警告]   2. 确认 COM4 未被其他程序占用"
 Write-Output "[警告]   3. 确认 plugins_real 里的 DLL 是本次构建的最新版"
 Write-Output "============================================================"
 
