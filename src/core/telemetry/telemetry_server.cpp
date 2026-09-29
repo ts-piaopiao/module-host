@@ -200,6 +200,7 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
 
   // 攻击区常量（与 ScriptConfig 同步，见 docs/ui-design.md §13.5）
   var BAND_X_MIN     = 0.010;
+  var BAND_X_BULGE   = 0.005;   // 近端弧凸出量（与 ScriptConfig::kBandXBulge 同步）
   var BAND_X_MAX     = 0.1458;
   var BAND_Y_TOP     = -0.074;
   var BAND_Y_BOT     = 0.019;
@@ -271,9 +272,18 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
       ctx.lineTo(cx, cy);
     }
 
-    cx = me_fx * CANVAS_W + facing * BAND_X_MIN * CANVAS_W;
-    cy = me_fy * CANVAS_H + BAND_Y_BOT * CANVAS_H;
-    ctx.lineTo(cx, cy);
+    // 近端弧：凸向角色（弧顶 x = BAND_X_MIN - BAND_X_BULGE，y=±y_half 时 x = BAND_X_MIN）
+    for (i = 0; i <= N; i++) {
+      t = i / N;
+      y = BAND_Y_BOT + (BAND_Y_TOP - BAND_Y_BOT) * t;
+      yHalf = (y < 0) ? BAND_Y_HALF_UP : BAND_Y_HALF_DN;
+      s = 1 - (y / yHalf) * (y / yHalf);
+      if (s < 0) s = 0;
+      var xInner = BAND_X_MIN - BAND_X_BULGE * Math.sqrt(s);
+      cx = me_fx * CANVAS_W + facing * xInner * CANVAS_W;
+      cy = me_fy * CANVAS_H + y * CANVAS_H;
+      ctx.lineTo(cx, cy);
+    }
 
     ctx.closePath();
     ctx.fillStyle = "rgba(14, 99, 156, 0.18)";

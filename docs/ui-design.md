@@ -406,7 +406,7 @@ UI-2 不改协议，用虚线圆表达"位置近似"。
 
 | 边界 | 公式 |
 |---|---|
-| 内边界 x_min | `kBandXMin = 0.010` |
+| 内边界 x_min(y) | `kBandXMin - kBandXBulge × √(1 - (y/y_half)²)`（凸向角色的弧） |
 | 外边界 x_max(y) | `kBandXMaxSame * sqrt(1 - (y/y_half)^2)` |
 | 上边界 y_top | `kBandYMin = -0.074` |
 | 下边界 y_bot | `kBandYMax = +0.019` |
@@ -414,12 +414,13 @@ UI-2 不改协议，用虚线圆表达"位置近似"。
 | 下侧半短轴 y_half(y>0) | `kBandYMax = 0.019` |
 
 **注意**：上下半短轴不同，所以**不是椭圆**，是"上下不对称的双弧扇段"。
-几何形状是：x_min 竖线 + 上下不对称椭圆弧。
+几何形状是：近端内弧（凸向角色，上下不对称）+ 远端椭圆弧（上下不对称）。
 
 **关键常量**（前端硬编码，与 `ScriptConfig` 同值）：
 
 ```js
 var BAND_X_MIN     = 0.010;
+var BAND_X_BULGE   = 0.005;   // 近端弧凸出量（与 ScriptConfig::kBandXBulge 同步）
 var BAND_X_MAX     = 0.1458;
 var BAND_Y_TOP     = -0.074;
 var BAND_Y_BOT     = 0.019;
@@ -438,12 +439,15 @@ var BAND_Y_HALF_DN = 0.019;   // = BAND_Y_BOT
    - `x_outer = BAND_X_MAX * sqrt(1 - (y/y_half)^2)`
    - 若 `x_outer < BAND_X_MIN`，跳过（理论上不会发生，
      因为 `(BAND_X_MIN/BAND_X_MAX)^2 = 0.0047 << 1`）
-2. 内边界：从 `(BAND_X_MIN, BAND_Y_TOP)` 到 `(BAND_X_MIN, BAND_Y_BOT)`
+2. 内边界：采样近端内弧（凸向角色）
+   - `x_inner = BAND_X_MIN - BAND_X_BULGE * sqrt(1 - (y/y_half)^2)`
+   - `y = BAND_Y_TOP` / `BAND_Y_BOT` 处 `sqrt` 项为 0 → `x_inner = BAND_X_MIN`；
+     `y = 0` 处 `x_inner = BAND_X_MIN - BAND_X_BULGE = 0.005`（弧顶，离角色最近）
 3. 组合为闭合多边形：
    ```
-   起点: (x_min, y_top)
-   → 沿 x_min 竖线到 (x_min, y_bot)
-   → 沿外弧反向采样回到 (x_min, y_top)
+   起点: (x_min, y_top)          // y_top 处 x_inner 恰为 BAND_X_MIN
+   → 沿外弧正向采样到 (x_min, y_bot)
+   → 沿内弧（近端凸弧）反向采样回到 (x_min, y_top)
    → closePath
    ```
 4. 坐标变换：
@@ -454,6 +458,42 @@ var BAND_Y_HALF_DN = 0.019;   // = BAND_Y_BOT
 **归一化到像素的转换**：全部乘 canvas CSS 尺寸，按各自维度。
 
 **若 `me_locked == false`**：不画攻击区。
+
+**变更记录（几何 v2）**：
+
+- v1：近端为竖直直线 `x = kBandXMin`，远端为椭圆弧。
+- v2：**仅近端变更**——近端改为凸向角色的弧
+  `x_inner(y) = kBandXMin - kBandXBulge × √(1 - (y/y_half)²)`；
+  **远端保持 v1 的椭圆弧** `x_max(y) = kBandXMaxSame × √(1 - (y/y_half)²)`。
+- **v2 是行为变更**（近端判定区域扩大 ~5px），不是纯重构。
+- 前后端同步：`script_geometry.cpp` 的 `IsInBand` 与
+  `telemetry_server.cpp` 的 `drawBand` 保持同一几何。
+
+**已知限制：6 fixture SHA256 不变**：
+
+v2 变更后，现有 6 fixture 的 trace SHA256 **全部保持不变**。原因：
+要让 v2 的新判定生效并被 trace 观测，需同时满足：
+
+1. 目标在近端条带 `x_far ∈ [0.005, 0.010)`；
+2. 目标为**窄框**（`w ≲ 0.015`），否则反方向带的 `x_far(back) ≥ kBandXMin`，
+   使 `in_band_any` 恒真，v1/v2 无法分歧；
+3. 该目标为锁定目标、`is_front=true`。
+
+现有 fixture 中即使帧位置落入条带（`real_session_long` 有 585 帧），
+目标框也足够宽，`in_band_any` 从未翻转 → trace 输出逐字段相同。
+
+**验收方式（v2 已通过）**：
+
+- `run_all.ps1` 11/11 全绿
+- 6 fixture I1–I11 各 11 项 PASS，exit=0
+- 独立探针 5/5 证明近端弧判定生效（见 commit message）
+- 人眼确认前端形状
+- **新增窄框 fixture**：单开一包，用于回归观测 v2 行为
+
+**既有缺陷（不在 v2 范围）**：
+
+- 当 `|ny| > 0.976`（贴近带上下边界）时 `x_max_at_y < kBandXMin`，
+  此时横向区间 `[x_inner, x_max]` 可能为空。v1 已有此问题，v2 未处理。
 
 ### 13.6 布局
 

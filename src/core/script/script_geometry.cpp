@@ -17,7 +17,7 @@ bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
         x_near = me.fx - t_right;
         x_far  = me.fx - t_left;
     }
-    if (x_far < ScriptConfig::kBandXMin) return false;
+    if (x_far < ScriptConfig::kBandXMin - ScriptConfig::kBandXBulge) return false;
     if (x_near > ScriptConfig::kBandXMaxSame) return false;
 
     // Y 轴：怪物 bbox 与 [me.fy + kBandYMin, me.fy + kBandYMax] 相交
@@ -38,8 +38,11 @@ bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
     const float scale = 1.0f - ny * ny;
     if (scale <= 0.0f) return false;
     const float x_max_at_y = ScriptConfig::kBandXMaxSame * std::sqrt(scale);
+    // 近端弧：凸向角色（弧顶 x = kBandXMin - kBandXBulge，y=±y_half 时 x = kBandXMin）
+    const float x_inner_at_y = ScriptConfig::kBandXMin
+                             - ScriptConfig::kBandXBulge * std::sqrt(scale);
 
-    if (x_far < ScriptConfig::kBandXMin) return false;
+    if (x_far < x_inner_at_y) return false;
     if (x_near > x_max_at_y) return false;
     return true;
 }
@@ -56,7 +59,7 @@ bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
         x_near = me_fx - t_right;
         x_far  = me_fx - t_left;
     }
-    if (x_far < ScriptConfig::kBandXMin) return false;
+    if (x_far < ScriptConfig::kBandXMin - ScriptConfig::kBandXBulge) return false;
     if (x_near > ScriptConfig::kBandXMaxSame) return false;
 
     const float t_top = t_cy - t_h * 0.5f;
@@ -74,8 +77,11 @@ bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
     const float scale = 1.0f - ny * ny;
     if (scale <= 0.0f) return false;
     const float x_max_at_y = ScriptConfig::kBandXMaxSame * std::sqrt(scale);
+    // 近端弧：凸向角色（弧顶 x = kBandXMin - kBandXBulge，y=±y_half 时 x = kBandXMin）
+    const float x_inner_at_y = ScriptConfig::kBandXMin
+                             - ScriptConfig::kBandXBulge * std::sqrt(scale);
 
-    if (x_far < ScriptConfig::kBandXMin) return false;
+    if (x_far < x_inner_at_y) return false;
     if (x_near > x_max_at_y) return false;
     return true;
 }
