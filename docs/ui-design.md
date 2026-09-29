@@ -526,8 +526,8 @@ var BAND_Y_HALF_DN = 0.019;   // = BAND_Y_BOT
 
 | meta | 方向 | 时机 | 字段 |
 |---|---|---|---|
-| `replay_begin` | core → UI | core 回放模式开始推流前 | `{"v":0,"meta":"replay_begin"}` |
-| `replay_end` | core → UI | core 回放模式所有帧推完后 | `{"v":0,"meta":"replay_end"}` |
+| `replay_begin` | core → UI | 回放模式开始推流前；回放期间新客户端连上时补发 | `{"v":0,"meta":"replay_begin"}` |
+| `replay_end` | core → UI | 回放模式所有帧推完后（清除回放标记前最后一次广播） | `{"v":0,"meta":"replay_end"}` |
 
 **语义**：
 
@@ -539,13 +539,21 @@ var BAND_Y_HALF_DN = 0.019;   // = BAND_Y_BOT
 
 - `replay_begin` / `replay_end` 之间的普通帧，**全部缓存**到本地数组
 - 缓存完成后，前端以 1x 播放缓存的帧，提供暂停 / 速度 / 步进 / 进度条
-- 断线重连后，前端重新进入"未知模式"，等待 core 重新发 `replay_begin`（实时模式不会发）
+- 断线重连：回放期间重连会立刻再收到补发的 `replay_begin`，前端重新进入
+  "回放缓存模式"；实时模式不会发 `replay_begin`（见下"延迟连接"）
 
-**已知限制**：
+**延迟连接（UI-3c-1a）**：
 
-- core 只在回放开始/结束时各发一次 `replay_begin` / `replay_end`。
-  若客户端连接晚于 `replay_begin`，会错过，前端进入"未知模式"（按实时渲染）。
-- UI-4 或后续版本可加"新客户端连接时重发 replay_begin"的能力。
+- core 进入回放模式时置"回放标记"，回放期间每条新建立的 WebSocket 连接
+  都会收到一次 `{"v":0,"meta":"replay_begin"}`，且必然是该连接的**首条消息**
+  （补发与帧广播在同一把 `clients_mutex` 下，不会被 `v == 1` 的帧插队）。
+- 置位与"向已连接客户端广播一次"在同一临界区完成，因此回放开始前就连上的
+  客户端与回放中才连上的客户端互不重叠，**每个连接最多收到一次** `replay_begin`。
+- 回放结束时先清除回放标记、再广播 `replay_end`：此后新连接不再收到
+  `replay_begin`，与实时模式一致，前端按"未收到 `replay_begin` 而收到 `v == 1`"
+  的分支处理。
+- 实现位置：`TelemetryServer::SetReplayMode()`（`src/core/telemetry/`），
+  由 `RunReplayMode()` 在回放首尾各调用一次。
 
 **扩展预留**：
 

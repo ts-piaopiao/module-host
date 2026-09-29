@@ -413,6 +413,9 @@ nlohmann::json BundleToJson(const telemetry::FrameBundle& bundle) {
     return j;
 }
 
+// 控制消息（docs/ui-design.md §十四）。调用者保证是单行合法 JSON。
+constexpr char kReplayBegin[] = R"({"v":0,"meta":"replay_begin"})";
+
 }  // namespace
 
 struct TelemetryServer::Impl {
@@ -422,6 +425,9 @@ struct TelemetryServer::Impl {
     std::atomic<bool> stopping{false};
     std::mutex clients_mutex;
     std::set<httplib::ws::WebSocket*> clients;
+    // 是否处于回放模式：为 true 时新连接补发一次 replay_begin。
+    // 只在持有 clients_mutex 时读写（与发送同临界区，保证顺序）。
+    bool replay_mode = false;
     bool routes_registered = false;
 };
 
@@ -455,6 +461,12 @@ bool TelemetryServer::Start(int port) {
             {
                 std::lock_guard<std::mutex> lock(im->clients_mutex);
                 im->clients.insert(&ws);
+                // 回放模式下给新连接补发 replay_begin（UI-3c-1a）。
+                // 必须与 insert 同一临界区：PublishRaw 同样持 clients_mutex，
+                // 因此这条控制消息一定先于任何帧写出，是该连接的首条消息。
+                if (im->replay_mode) {
+                    ws.send(kReplayBegin);
+                }
             }
             // 自设读超时后 read() 在帧边界返回 Timeout 且连接保持可用。
             // 否则 read() 会一直等到对端回 Close 或 300s 兜底超时，
@@ -532,6 +544,30 @@ void TelemetryServer::PublishRaw(const std::string& json_line) {
     for (auto it = im->clients.begin(); it != im->clients.end();) {
         auto* ws = *it;
         if (ws == nullptr || !ws->is_open() || !ws->send(json_line)) {
+            it = im->clients.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void TelemetryServer::SetReplayMode(bool on) {
+    if (impl_ == nullptr) return;
+    Impl* im = impl_;
+
+    // 置位与广播在同一临界区内完成，避免两种竞态：
+    //   - 先广播后置位：间隙里连上的客户端会漏掉 replay_begin；
+    //   - 先置位后广播：间隙里连上的客户端会收到两次（自己补发一次 +
+    //     这里的广播一次）。置位前已连接的客户端由本次广播覆盖，
+    //     置位后新连接由 handler 补发，两者互不重叠。
+    std::lock_guard<std::mutex> lock(im->clients_mutex);
+    const bool was = im->replay_mode;
+    im->replay_mode = on;
+    if (!on || was) return;
+
+    for (auto it = im->clients.begin(); it != im->clients.end();) {
+        auto* ws = *it;
+        if (ws == nullptr || !ws->is_open() || !ws->send(kReplayBegin)) {
             it = im->clients.erase(it);
         } else {
             ++it;

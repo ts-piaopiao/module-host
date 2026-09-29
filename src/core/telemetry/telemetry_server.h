@@ -29,8 +29,12 @@ public:
     void PublishRaw(const std::string& json_line);
 
     // 设置"当前处于回放模式"标记。
-    // 为 true 时，新 WebSocket 连接建立后会自动补发一次 replay_begin，
-    // 确保任何时刻连上的客户端都能进入回放缓存模式（见 docs/ui-design.md §十四）。
+    // false→true：向当前已连接客户端广播一次 replay_begin，并置位；
+    //   此后每个新 WebSocket 连接建立时也补发一次 replay_begin，
+    //   保证任何时刻连上的客户端首条消息就是 replay_begin
+    //   （见 docs/ui-design.md §十四）。
+    // true→false：只清标记，不再补发（此后的连接收不到 replay_begin）。
+    // 幂等：重复置位为 true 不会重复广播。
     // 线程安全。
     void SetReplayMode(bool on);
 

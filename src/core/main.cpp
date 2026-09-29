@@ -222,8 +222,10 @@ static int RunReplayMode(const std::string& trace_path,
     LogPrintf("[回放] 开始: %s (speed=%.2fx)\n", trace_path.c_str(), speed);
 
     // 控制消息：通知前端进入回放缓存模式（契约见 docs/ui-design.md §十四）。
+    // SetReplayMode(true) = 置位回放标记 + 向已连接客户端广播一次
+    // replay_begin；回放期间新连上的客户端由遥测服务器补发（UI-3c-1a）。
     if (telemetry != nullptr) {
-        telemetry->PublishRaw("{\"v\":0,\"meta\":\"replay_begin\"}");
+        telemetry->SetReplayMode(true);
     }
 
     std::string line;
@@ -294,7 +296,9 @@ static int RunReplayMode(const std::string& trace_path,
               static_cast<unsigned long long>(bad_lines));
 
     // 控制消息：通知前端缓存结束，可进入本地播放控制。
+    // 先退出回放模式（此后新连的客户端不再补发 replay_begin），再广播 replay_end。
     if (telemetry != nullptr) {
+        telemetry->SetReplayMode(false);
         telemetry->PublishRaw("{\"v\":0,\"meta\":\"replay_end\"}");
     }
     return 0;
