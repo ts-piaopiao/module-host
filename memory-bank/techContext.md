@@ -74,7 +74,7 @@ git 不在默认 PATH，需追加：`$env:Path += ";C:\Program Files\Git\cmd"`
    `cmd /c "git diff -- <file> > out.diff"` 再用编辑器读。
 6. `Get-Content` 读文件需显式 `-Encoding UTF8` 才能正确读 UTF-8 中文。
 
-## 4. 环境陷阱索引（`docs/env-traps.md`，目前 E1–E6）
+## 4. 环境陷阱索引（`docs/env-traps.md`，目前 E1–E8）
 
 | # | 陷阱 | 要点 |
 |---|---|---|
@@ -84,6 +84,8 @@ git 不在默认 PATH，需追加：`$env:Path += ";C:\Program Files\Git\cmd"`
 | E4 | `GetTickCount64` / `Sleep` 分辨率 **15.6ms** | 时序断言不能按 1ms 精度写 |
 | E5 | `Set-Content -Encoding UTF8` 写出 BOM | 想要无 BOM 时会踩 |
 | E6 | `findstr` 正则匹配失败 | 复杂模式改用 PowerShell `-match` / `-like` |
+| E7 | PowerShell 双引号内 `@{u}` 被解析为哈希表 | 用单引号 `'@{u}'` 或 `origin/master`；含 `@`/`$`/`{}` 的字面量一律单引号 |
+| E8 | 用陈旧 `origin/master` 引用估算领先数 | 算 ahead/behind 前先 `git fetch origin`；push 影响面以 push 输出 `old..new` 为准 |
 
 > **维护规则**：每发现一处追加一条；已修复的标注修复 commit。
 

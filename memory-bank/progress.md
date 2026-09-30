@@ -1,6 +1,6 @@
 # progress — 已完成、待办与已知问题
 
-> **最后更新**：2026-09-30 ｜ HEAD = `05f65bc` ｜ 工作区干净（已跟踪）｜ origin/master 未 push
+> **最后更新**：2026-09-30 ｜ HEAD = `5a36773` ｜ 工作区干净 ｜ origin/master = `b0d2a0c`（ahead=1，收尾包待 push）
 
 ## 1. 已完成
 
@@ -73,7 +73,6 @@ output-manager、recorder、ui-design、env-traps（E1–E6）。
 |---|---|---|---|
 | 1 | **窄框 fixture**：构造 `narrow_box_scene.jsonl`，v2(`2b26779`)/v3(`05f65bc`) 双构建对比 trace，预期 SHA 不同 | **低**（已降级：`real_session_long` 497 翻转帧已提供端到端观测证据） | 可后置，单开 |
 | 2 | `docs/env-traps.md` 追加 E7/E8 | 中 | 单开一包 |
-| 3 | `push origin/master` | 中 | 待用户定夺 |
 | 5 | `docs/contract-change-procedure.md` 中 13/13、6/6 为三插件时代数字，与现状不符 | 低 | 待改 |
 | 6 | UI-3c-2 收尾项（5.6 验证、实时 `ui3c2_live.cfg` 观察） | 低 | UI 包 |
 
@@ -146,3 +145,4 @@ I1–I11 各 11 项 PASS、FAIL=0（`MH_SCRIPT_SEED=42`）。
 - 2026-09-30：攻击带几何 v3 入库（`05f65bc`），1/6 fixture SHA 变化，已解释为 v3 双向性
   （近端收紧 + 远端放宽，5 个 fixture 实测 0 翻转帧）。
 - 后续按 `AGENTS.md`：读 memory-bank → 出 Implementation Plan → 等确认 → 实施 → 回写。
+- 2026-09-30：v3 收尾包（`e47591e` / `bd76709` / `b0d2a0c` / `5a36773`）— memory-bank 6/6 跟踪、R6/R7/R8 修正、push 到 origin/master、env-traps E7/E8

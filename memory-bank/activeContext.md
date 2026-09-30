@@ -5,7 +5,7 @@
 - **最后更新**：2026-09-30
 - **HEAD**：`05f65bc feat(script): attack band geometry v3 (apex + 45° wedge + flat far edge)`
 - **工作区**：干净（已跟踪文件）；`AGENTS.md` / `memory-bank/` 为未跟踪
-- **origin/master**：**落后未 push**
+- **origin/master**：`b0d2a0c`（ahead=0 / behind=0，已 push）
 
 ---
 
