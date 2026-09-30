@@ -14,10 +14,10 @@ struct ScriptConfig {
     static constexpr uint64_t kTargetLoseMs = 500;
     static constexpr uint64_t kTargetSwitchCooldownMs = 500;
     static constexpr float kSamePlatY = 0.028f;
-    static constexpr float kBandXMin = 0.010f;
-    // 近端弧凸出量：弧顶贴到角色正前方（kBandXMin - kBandXBulge = 0.005）
-    static constexpr float kBandXBulge = 0.005f;
-    // 冰冻术硬范围 300px，缩 20px 留容错 → 280px，归一化 280/1920 = 0.1458
+    // 攻击带 v3：近端尖点 + 45° 斜边 + 远端竖直线
+    static constexpr float kBandXApex = 0.005f;      // 尖点 x（贴角色正前方）
+    static constexpr float kBandApexSlope = 1.0f;    // 顶点半角正切（1.0 → 顶点总角 90°）
+    // 冰冻术硬范围 300px，缩 20px 留容错 → 280px，归一化 280/1920 = 0.1458；v3：远端竖直边
     static constexpr float kBandXMaxSame = 0.1458f;
     static constexpr float kBandXMaxCross = 0.104f;
     static constexpr float kBandYMin = -0.074f;

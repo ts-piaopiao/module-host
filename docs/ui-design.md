@@ -325,7 +325,7 @@ class FileSource {   // 二期
 ### 13.1 目标与非目标
 
 **目标**：在状态面板下方加一块 canvas，以归一化坐标系绘制
-检测框、me 点、target 点、攻击区椭圆，让脚本的空间决策可视化。
+检测框、me 点、target 点、攻击带（五边形），让脚本的空间决策可视化。
 
 **非目标**：
 
@@ -398,7 +398,7 @@ y 像素 = `(100/1080)*450 = 41.7`，相等。
 `kSamePlatY = 0.028` 意味着 target 与 me 的脚底 y 差 ≤ 0.028。
 UI-2 不改协议，用虚线圆表达"位置近似"。
 
-### 13.5 攻击区椭圆绘制规范
+### 13.5 攻击带绘制规范
 
 **几何定义**（源自 `script_geometry.cpp`，与 `IsInBand` 逐条对应）：
 
@@ -406,94 +406,82 @@ UI-2 不改协议，用虚线圆表达"位置近似"。
 
 | 边界 | 公式 |
 |---|---|
-| 内边界 x_min(y) | `kBandXMin - kBandXBulge × √(1 - (y/y_half)²)`（凸向角色的弧） |
-| 外边界 x_max(y) | `kBandXMaxSame * sqrt(1 - (y/y_half)^2)` |
+| 内边界 x_inner(y) | `kBandXApex + \|y\| / kBandApexSlope`（近端尖点 + 45° 斜边） |
+| 外边界 x_outer | `kBandXMaxSame = 0.1458`（**常数**，远端竖直边） |
 | 上边界 y_top | `kBandYMin = -0.074` |
 | 下边界 y_bot | `kBandYMax = +0.019` |
-| 上侧半短轴 y_half(y<0) | `-kBandYMin = 0.074` |
-| 下侧半短轴 y_half(y>0) | `kBandYMax = 0.019` |
 
-**注意**：上下半短轴不同，所以**不是椭圆**，是"上下不对称的双弧扇段"。
-几何形状是：近端内弧（凸向角色，上下不对称）+ 远端椭圆弧（上下不对称）。
+**注意**：**不是椭圆、不是扇段**，是**上下不对称的五边形**。
+几何形状是：尖点 + 两条 45° 斜边 + 上下两条水平边 + 远端一条竖直边。
 
 **关键常量**（前端硬编码，与 `ScriptConfig` 同值）：
 
 ```js
-var BAND_X_MIN     = 0.010;
-var BAND_X_BULGE   = 0.005;   // 近端弧凸出量（与 ScriptConfig::kBandXBulge 同步）
-var BAND_X_MAX     = 0.1458;
-var BAND_Y_TOP     = -0.074;
-var BAND_Y_BOT     = 0.019;
-var BAND_Y_HALF_UP = 0.074;   // = -BAND_Y_TOP
-var BAND_Y_HALF_DN = 0.019;   // = BAND_Y_BOT
+var BAND_X_APEX     = 0.005;   // 尖点 x（贴角色正前方，与 ScriptConfig::kBandXApex 同步）
+var BAND_X_FAR      = 0.1458;  // 远端竖直边 x（= 280px @1920，与 kBandXMaxSame 同步）
+var BAND_APEX_SLOPE = 1.0;     // 顶点半角正切（1.0 → 顶点总角 90°，与 kBandApexSlope 同步）
+var BAND_Y_TOP      = -0.074;
+var BAND_Y_BOT      = 0.019;
 ```
 
 前端**硬编码**这些值，不通过遥测传输——它们属于"脚本几何契约"，
 变化频率极低（重构期间从未变过）。若将来 `ScriptConfig` 改了这些常量，
 前端需同步。这一风险记入 §13.7 的"协议-前端同步契约"。
 
-**绘制步骤**：
+**绘制步骤**（5 顶点直连）：
 
-1. 采样外弧：对 `y ∈ [BAND_Y_TOP, BAND_Y_BOT]` 取 N=32 个点
-   - `y_half = (y < 0) ? BAND_Y_HALF_UP : BAND_Y_HALF_DN`
-   - `x_outer = BAND_X_MAX * sqrt(1 - (y/y_half)^2)`
-   - 若 `x_outer < BAND_X_MIN`，跳过（理论上不会发生，
-     因为 `(BAND_X_MIN/BAND_X_MAX)^2 = 0.0047 << 1`）
-2. 内边界：采样近端内弧（凸向角色）
-   - `x_inner = BAND_X_MIN - BAND_X_BULGE * sqrt(1 - (y/y_half)^2)`
-   - `y = BAND_Y_TOP` / `BAND_Y_BOT` 处 `sqrt` 项为 0 → `x_inner = BAND_X_MIN`；
-     `y = 0` 处 `x_inner = BAND_X_MIN - BAND_X_BULGE = 0.005`（弧顶，离角色最近）
-3. 组合为闭合多边形：
-   ```
-   起点: (x_min, y_top)          // y_top 处 x_inner 恰为 BAND_X_MIN
-   → 沿外弧正向采样到 (x_min, y_bot)
-   → 沿内弧（近端凸弧）反向采样回到 (x_min, y_top)
-   → closePath
-   ```
-4. 坐标变换：
+1. 顶点表（全部先算归一化，再变换到 canvas）：
+   - 尖点      `apex   = (kBandXApex, 0)` → `(0.005, 0)`
+   - 上肩点    `xsTop  = (kBandXApex + |BAND_Y_TOP| / BAND_APEX_SLOPE, BAND_Y_TOP)` → `(0.079, -0.074)`
+   - 远端上    `(kBandXMaxSame, BAND_Y_TOP)` → `(0.1458, -0.074)`
+   - 远端下    `(kBandXMaxSame, BAND_Y_BOT)` → `(0.1458, +0.019)`
+   - 下肩点    `xsBot  = (kBandXApex + |BAND_Y_BOT| / BAND_APEX_SLOPE, BAND_Y_BOT)` → `(0.024, +0.019)`
+2. 路径：`moveTo(apex)` → `lineTo(xsTop)` → `lineTo(远端上)` → `lineTo(远端下)` →
+   `lineTo(xsBot)` → `closePath`（closePath 自动连回尖点，形成下侧 45° 斜边）。
+3. 坐标变换：
    - `canvas_x = me_fx * W + facing * norm_x * W`
    - `canvas_y = me_fy * H + norm_y * H`
-5. 填充 + 描边
+4. 填充 + 描边
+
+> 斜边斜率由 `kBandApexSlope` 决定：`x_inner(y) = kBandXApex + |y| / kBandApexSlope`。
+> `kBandApexSlope = 1.0` → 每侧 45°，顶点总角 90°。
 
 **归一化到像素的转换**：全部乘 canvas CSS 尺寸，按各自维度。
 
 **若 `me_locked == false`**：不画攻击区。
 
-**变更记录（几何 v2）**：
+**变更记录**：
 
 - v1：近端为竖直直线 `x = kBandXMin`，远端为椭圆弧。
-- v2：**仅近端变更**——近端改为凸向角色的弧
-  `x_inner(y) = kBandXMin - kBandXBulge × √(1 - (y/y_half)²)`；
-  **远端保持 v1 的椭圆弧** `x_max(y) = kBandXMaxSame × √(1 - (y/y_half)²)`。
-- **v2 是行为变更**（近端判定区域扩大 ~5px），不是纯重构。
+- v2：近端改为凸向角色的弧 `x_inner(y) = kBandXMin - kBandXBulge × √(1 - (y/y_half)²)`；
+  远端保持椭圆弧。
+- v3（**本次**）：近端由弧改为**尖点**；远端由椭圆弧改为**竖直常数**；
+  上下边由弧线改为**直线**。整体为**五边形**。
+  `kBandXBulge` 删除，新增 `kBandXApex = 0.005`、`kBandApexSlope = 1.0`。
+- **v3 是行为变更**（远端面积大幅扩大），不是纯重构。
 - 前后端同步：`script_geometry.cpp` 的 `IsInBand` 与
   `telemetry_server.cpp` 的 `drawBand` 保持同一几何。
 
-**已知限制：6 fixture SHA256 不变**：
+**已知限制：6 fixture SHA256 预期变化**：
 
-v2 变更后，现有 6 fixture 的 trace SHA256 **全部保持不变**。原因：
-要让 v2 的新判定生效并被 trace 观测，需同时满足：
+v3 扩大了远端面积（`x_outer` 由随 y 衰减的椭圆弧改为恒 0.1458），
+现有 6 fixture 的 trace SHA256 **预期改变**——如实记录新旧值，
+变了就是变了，不试图让它不变。
 
-1. 目标在近端条带 `x_far ∈ [0.005, 0.010)`；
-2. 目标为**窄框**（`w ≲ 0.015`），否则反方向带的 `x_far(back) ≥ kBandXMin`，
-   使 `in_band_any` 恒真，v1/v2 无法分歧；
-3. 该目标为锁定目标、`is_front=true`。
-
-现有 fixture 中即使帧位置落入条带（`real_session_long` 有 585 帧），
-目标框也足够宽，`in_band_any` 从未翻转 → trace 输出逐字段相同。
-
-**验收方式（v2 已通过）**：
+**验收方式（v3）**：
 
 - `run_all.ps1` 11/11 全绿
-- 6 fixture I1–I11 各 11 项 PASS，exit=0
-- 独立探针 5/5 证明近端弧判定生效（见 commit message）
-- 人眼确认前端形状
-- **新增窄框 fixture**：单开一包，用于回归观测 v2 行为
+- 6 fixture `run_script_acceptance.ps1` I1–I11 逐项结果
+- 人眼确认前端形状为五边形
+- 窄框 fixture（v2 遗留待办）仍在待办，与 v3 分开单开
 
-**既有缺陷（不在 v2 范围）**：
+**既有缺陷 K1（空带）— v3 后已消除**：
 
-- 当 `|ny| > 0.976`（贴近带上下边界）时 `x_max_at_y < kBandXMin`，
-  此时横向区间 `[x_inner, x_max]` 可能为空。v1 已有此问题，v2 未处理。
+- v1/v2 时期：当 `|ny| > 0.976`（贴近带上下边界）时 `x_max_at_y < kBandXMin`，
+  横向区间 `[x_inner, x_max]` 可能为空。
+- **v3 后**：`x_outer` 恒为 `kBandXMaxSame = 0.1458`，而
+  `x_inner(y)` 最大值出现在 `|y|` 最大处 = `0.005 + 0.074 = 0.079 < 0.1458`，
+  **空带缺陷已消除**。
 
 ### 13.6 布局
 

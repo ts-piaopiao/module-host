@@ -199,13 +199,11 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
   var CANVAS_H = 450;
 
   // 攻击区常量（与 ScriptConfig 同步，见 docs/ui-design.md §13.5）
-  var BAND_X_MIN     = 0.010;
-  var BAND_X_BULGE   = 0.005;   // 近端弧凸出量（与 ScriptConfig::kBandXBulge 同步）
-  var BAND_X_MAX     = 0.1458;
-  var BAND_Y_TOP     = -0.074;
-  var BAND_Y_BOT     = 0.019;
-  var BAND_Y_HALF_UP = 0.074;
-  var BAND_Y_HALF_DN = 0.019;
+  var BAND_X_APEX     = 0.005;   // 尖点 x（贴角色正前方，与 ScriptConfig::kBandXApex 同步）
+  var BAND_X_FAR      = 0.1458;  // 远端竖直边 x（= 280px @1920，与 kBandXMaxSame 同步）
+  var BAND_APEX_SLOPE = 1.0;     // 顶点半角正切（1.0 → 顶点总角 90°，与 kBandApexSlope 同步）
+  var BAND_Y_TOP      = -0.074;
+  var BAND_Y_BOT      = 0.019;
 
   var canvas = null;
   var ctx = null;
@@ -251,40 +249,22 @@ const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
 
   function drawBand(me_fx, me_fy, facing) {
     if (!ctx) return;
-    var N = 32;
-    var i, t, y, yHalf, s, xOuter, cx, cy;
+    var yTop = me_fy * CANVAS_H + BAND_Y_TOP * CANVAS_H;
+    var yBot = me_fy * CANVAS_H + BAND_Y_BOT * CANVAS_H;
+    var farX = me_fx * CANVAS_W + facing * BAND_X_FAR * CANVAS_W;
+    var xsTop = me_fx * CANVAS_W
+              + facing * (BAND_X_APEX + Math.abs(BAND_Y_TOP) / BAND_APEX_SLOPE) * CANVAS_W;
+    var xsBot = me_fx * CANVAS_W
+              + facing * (BAND_X_APEX + Math.abs(BAND_Y_BOT) / BAND_APEX_SLOPE) * CANVAS_W;
+    var apexX = me_fx * CANVAS_W + facing * BAND_X_APEX * CANVAS_W;
+    var apexY = me_fy * CANVAS_H;
 
     ctx.beginPath();
-    cx = me_fx * CANVAS_W + facing * BAND_X_MIN * CANVAS_W;
-    cy = me_fy * CANVAS_H + BAND_Y_TOP * CANVAS_H;
-    ctx.moveTo(cx, cy);
-
-    for (i = 0; i <= N; i++) {
-      t = i / N;
-      y = BAND_Y_TOP + (BAND_Y_BOT - BAND_Y_TOP) * t;
-      yHalf = (y < 0) ? BAND_Y_HALF_UP : BAND_Y_HALF_DN;
-      s = 1 - (y / yHalf) * (y / yHalf);
-      if (s < 0) s = 0;
-      xOuter = BAND_X_MAX * Math.sqrt(s);
-      if (xOuter < BAND_X_MIN) xOuter = BAND_X_MIN;
-      cx = me_fx * CANVAS_W + facing * xOuter * CANVAS_W;
-      cy = me_fy * CANVAS_H + y * CANVAS_H;
-      ctx.lineTo(cx, cy);
-    }
-
-    // 近端弧：凸向角色（弧顶 x = BAND_X_MIN - BAND_X_BULGE，y=±y_half 时 x = BAND_X_MIN）
-    for (i = 0; i <= N; i++) {
-      t = i / N;
-      y = BAND_Y_BOT + (BAND_Y_TOP - BAND_Y_BOT) * t;
-      yHalf = (y < 0) ? BAND_Y_HALF_UP : BAND_Y_HALF_DN;
-      s = 1 - (y / yHalf) * (y / yHalf);
-      if (s < 0) s = 0;
-      var xInner = BAND_X_MIN - BAND_X_BULGE * Math.sqrt(s);
-      cx = me_fx * CANVAS_W + facing * xInner * CANVAS_W;
-      cy = me_fy * CANVAS_H + y * CANVAS_H;
-      ctx.lineTo(cx, cy);
-    }
-
+    ctx.moveTo(apexX, apexY);
+    ctx.lineTo(xsTop, yTop);
+    ctx.lineTo(farX,  yTop);
+    ctx.lineTo(farX,  yBot);
+    ctx.lineTo(xsBot, yBot);
     ctx.closePath();
     ctx.fillStyle = "rgba(14, 99, 156, 0.18)";
     ctx.fill();

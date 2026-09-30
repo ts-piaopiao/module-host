@@ -6,7 +6,7 @@
 
 bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
     if (!t.has || !me.valid) return false;
-    // 攻击区：椭圆扇段（X 前方 19px~280px；Y 上方 80px / 下方 20px）
+    // 攻击带 v3：五边形（尖点 + 45° 斜边 + 远端竖直边；X 前方 9.6px~280px；Y 上方 80px / 下方 20px）
     const float t_left = t.cx - t.w * 0.5f;
     const float t_right = t.cx + t.w * 0.5f;
     float x_near, x_far;
@@ -17,7 +17,7 @@ bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
         x_near = me.fx - t_right;
         x_far  = me.fx - t_left;
     }
-    if (x_far < ScriptConfig::kBandXMin - ScriptConfig::kBandXBulge) return false;
+    if (x_far < ScriptConfig::kBandXApex) return false;
     if (x_near > ScriptConfig::kBandXMaxSame) return false;
 
     // Y 轴：怪物 bbox 与 [me.fy + kBandYMin, me.fy + kBandYMax] 相交
@@ -27,23 +27,17 @@ bool IsInBand(const TargetLockState& t, const MeLockState& me, int facing) {
     const float band_bot = me.fy + ScriptConfig::kBandYMax;
     if (t_bot < band_top || t_top > band_bot) return false;
 
-    // 椭圆约束：X 最远随 Y 高度衰减
+    // 近端斜边约束：x_inner 随 |y| 线性增大
     // 用 bbox 与 band 相交区间的中点作为"代表高度"
     const float y_clip_top = (t_top > band_top) ? t_top : band_top;
     const float y_clip_bot = (t_bot < band_bot) ? t_bot : band_bot;
     const float y_rep = (y_clip_top + y_clip_bot) * 0.5f - me.fy;
-    const float y_half = (y_rep < 0.0f) ? (-ScriptConfig::kBandYMin) : ScriptConfig::kBandYMax;
-    if (y_half <= 0.0f) return false;
-    const float ny = y_rep / y_half;
-    const float scale = 1.0f - ny * ny;
-    if (scale <= 0.0f) return false;
-    const float x_max_at_y = ScriptConfig::kBandXMaxSame * std::sqrt(scale);
-    // 近端弧：凸向角色（弧顶 x = kBandXMin - kBandXBulge，y=±y_half 时 x = kBandXMin）
-    const float x_inner_at_y = ScriptConfig::kBandXMin
-                             - ScriptConfig::kBandXBulge * std::sqrt(scale);
 
+    // v3：近端尖点 + 45° 斜边；远端竖直常数
+    const float x_inner_at_y = ScriptConfig::kBandXApex
+                             + std::fabs(y_rep) / ScriptConfig::kBandApexSlope;
     if (x_far < x_inner_at_y) return false;
-    if (x_near > x_max_at_y) return false;
+    if (x_near > ScriptConfig::kBandXMaxSame) return false;
     return true;
 }
 
@@ -59,7 +53,7 @@ bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
         x_near = me_fx - t_right;
         x_far  = me_fx - t_left;
     }
-    if (x_far < ScriptConfig::kBandXMin - ScriptConfig::kBandXBulge) return false;
+    if (x_far < ScriptConfig::kBandXApex) return false;
     if (x_near > ScriptConfig::kBandXMaxSame) return false;
 
     const float t_top = t_cy - t_h * 0.5f;
@@ -71,17 +65,11 @@ bool IsInBand(float me_fx, float me_fy, float t_cx, float t_cy,
     const float y_clip_top = (t_top > band_top) ? t_top : band_top;
     const float y_clip_bot = (t_bot < band_bot) ? t_bot : band_bot;
     const float y_rep = (y_clip_top + y_clip_bot) * 0.5f - me_fy;
-    const float y_half = (y_rep < 0.0f) ? (-ScriptConfig::kBandYMin) : ScriptConfig::kBandYMax;
-    if (y_half <= 0.0f) return false;
-    const float ny = y_rep / y_half;
-    const float scale = 1.0f - ny * ny;
-    if (scale <= 0.0f) return false;
-    const float x_max_at_y = ScriptConfig::kBandXMaxSame * std::sqrt(scale);
-    // 近端弧：凸向角色（弧顶 x = kBandXMin - kBandXBulge，y=±y_half 时 x = kBandXMin）
-    const float x_inner_at_y = ScriptConfig::kBandXMin
-                             - ScriptConfig::kBandXBulge * std::sqrt(scale);
 
+    // v3：近端尖点 + 45° 斜边；远端竖直常数
+    const float x_inner_at_y = ScriptConfig::kBandXApex
+                             + std::fabs(y_rep) / ScriptConfig::kBandApexSlope;
     if (x_far < x_inner_at_y) return false;
-    if (x_near > x_max_at_y) return false;
+    if (x_near > ScriptConfig::kBandXMaxSame) return false;
     return true;
 }
