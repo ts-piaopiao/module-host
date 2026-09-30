@@ -125,4 +125,50 @@ $text = [System.IO.File]::ReadAllText($path)
 
 ---
 
+## E7：PowerShell 双引号内 `@{u}` 被解析为哈希表
+
+**现象**：`git log --oneline origin/master.."@{u}"` 报
+
+```text
+fatal: ambiguous argument 'dQA=': unknown revision or path not in the working tree.
+```
+
+**根因**：PowerShell 把双引号内的 `@{u}` 当作**哈希表字面量**求值——
+`@` 是哈希表起始符，`{u}` 被当键名处理，字符串被求值成 `dQA=` 之类
+无意义内容再传给 git，于是 git 收到一个不存在的 revision。
+
+**首次踩坑**：`b0d2a0c` v3 收尾包（2026-09-30），push 后核对
+`origin/master..@{u}` 时触发；当次为纯引号问题，git 本身正常。
+
+**规则**：
+
+- 要引用 upstream 就用**单引号**：`git rev-parse '@{u}'`。
+- 或直接写目标名，绕开该语法：`git rev-parse origin/master`。
+- 凡 PowerShell 中含 `@` / `$` / `{}` 的字面量传给外部命令，一律**单引号**。
+
+---
+
+## E8：用陈旧 `origin/master` 引用估算「本地领先数」
+
+**现象**：`git rev-list --count origin/master..HEAD` 得到 **33**，
+据此外报「本地领先 33、push 将发布 33 个提交」；
+实际 `git push` 输出的范围是 `f85acf6..b0d2a0c`，**新发布只有 9 个**
+（远程 tip 早已是 `f85acf6`，本地引用却还停在 `eda8543`）。
+
+**根因**：`origin/master` 是**上次 fetch 时的快照**，别人/别的机器 push 过之后
+本地不会自动更新。用它算 ahead/behind **只在刚 fetch 之后可信**。
+
+**首次踩坑**：`b0d2a0c` v3 收尾包（2026-09-30），**误导过一次 push 影响面判断**
+（已据此在 push 前贴出核对、push 后用 fetch 复验，实际未造成错误操作）。
+
+**规则**：
+
+- 涉及「领先 / 落后多少」「这次 push 会发布多少」的判断前，**先 `git fetch origin`**，
+  再 `git rev-list --count`。
+- 交叉验证三者是否一致：
+  `git rev-parse HEAD` / `git rev-parse origin/master` / `git rev-parse '@{u}'`（见 E7）。
+- push 的**实际影响面以 push 输出里的 `old..new` 范围为准**，不以本地估算为准。
+
+---
+
 **文档完**。
