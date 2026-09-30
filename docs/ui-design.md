@@ -480,7 +480,9 @@ v3 入库后实测（seed=42，v2→v3）：
 
 - `run_all.ps1` 11/11 全绿
 - 6 fixture `run_script_acceptance.ps1` I1–I11 逐项结果
-- 人眼确认前端形状为五边形
+- 人眼确认前端形状：**v3 未复验**（v2 时做过 canvas 像素级扫描；v3 的
+  `drawBand` 为 5 顶点直连，形状由代码确定。如需视觉确认，起
+  `core.exe --replay <trace>` + 浏览器 `localhost:6601` 查看）
 - 窄框 fixture：**已降级为针对性回归（非唯一证据）**。
   `real_session_long` 的 497 翻转帧已提供 v3 行为变更的端到端观测证据；
   窄框 fixture 如仍要做，须按 v3 几何重新推导分歧缝判据（见
