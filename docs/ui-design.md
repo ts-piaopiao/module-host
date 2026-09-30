@@ -458,22 +458,33 @@ var BAND_Y_BOT      = 0.019;
 - v3（**本次**）：近端由弧改为**尖点**；远端由椭圆弧改为**竖直常数**；
   上下边由弧线改为**直线**。整体为**五边形**。
   `kBandXBulge` 删除，新增 `kBandXApex = 0.005`、`kBandApexSlope = 1.0`。
-- **v3 是行为变更**（远端面积大幅扩大），不是纯重构。
+- **v3 是行为变更**（**双向**：近端收紧 + 远端放宽）
+  - 近端：`x_inner` 由 v2 的 ~0.010（近恒定）改为 `kBandXApex + |y|/kBandApexSlope`，
+    在 `|y|>0` 处**收紧**（`|y|=0.074` 时达 0.079）
+  - 远端：由椭圆弧 `0.1458·√(1−ny²)` 改为**竖直常数** `0.1458`，整体**放宽**
+  - 只在 `y=0` 处与 v2 重合，**整带右移**
 - 前后端同步：`script_geometry.cpp` 的 `IsInBand` 与
   `telemetry_server.cpp` 的 `drawBand` 保持同一几何。
 
-**已知限制：6 fixture SHA256 预期变化**：
+**实测：6 fixture SHA256 变化情况**
 
-v3 扩大了远端面积（`x_outer` 由随 y 衰减的椭圆弧改为恒 0.1458），
-现有 6 fixture 的 trace SHA256 **预期改变**——如实记录新旧值，
-变了就是变了，不试图让它不变。
+v3 入库后实测（seed=42，v2→v3）：
+- `real_session_long.jsonl`：**CHANGED**（`9a3b6e19…` → `551f79b6…`，
+  3586/18404 行不同，锁定目标切换，**497 翻转帧**）
+- 其余 5 个（`real_session_600f` / `turn_scene` / `long_idle_scene` /
+  `max_dets_scene` / `multi_target_scene`）：**SAME**（**0 翻转帧**）
+- 原因：v3 双向改动，只在目标落入「v2 外 / v3 内」或「v2 内 / v3 外」的
+  分歧缝时翻转；5 个合成场景的轨迹未覆盖该缝
 
 **验收方式（v3）**：
 
 - `run_all.ps1` 11/11 全绿
 - 6 fixture `run_script_acceptance.ps1` I1–I11 逐项结果
 - 人眼确认前端形状为五边形
-- 窄框 fixture（v2 遗留待办）仍在待办，与 v3 分开单开
+- 窄框 fixture：**已降级为针对性回归（非唯一证据）**。
+  `real_session_long` 的 497 翻转帧已提供 v3 行为变更的端到端观测证据；
+  窄框 fixture 如仍要做，须按 v3 几何重新推导分歧缝判据（见
+  memory-bank/activeContext.md §3），**可后置**。
 
 **既有缺陷 K1（空带）— v3 后已消除**：
 
