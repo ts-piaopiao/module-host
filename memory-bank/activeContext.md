@@ -3,9 +3,9 @@
 > **更新最频繁**的文件。任务开始读它，任务结束写它。
 
 - **最后更新**：2026-09-30
-- **HEAD**：`05f65bc feat(script): attack band geometry v3 (apex + 45° wedge + flat far edge)`
-- **工作区**：干净（已跟踪文件）；`AGENTS.md` / `memory-bank/` 为未跟踪
-- **origin/master**：`b0d2a0c`（ahead=0 / behind=0，已 push）
+- **HEAD**：与 `origin/master` 一致（ahead=0 / behind=0）；具体 SHA 见 `git log -1`
+- **工作区**：干净（已跟踪文件）；`AGENTS.md` 为唯一未跟踪项
+- **origin/master**：与本地同步
 
 ---
 
@@ -117,7 +117,7 @@ v3 后近端为 `x_inner(y) = 0.005 + |y|`、远端恒 0.1458，窄缝判据已�
 | ~~2~~ | ~~空带既有缺陷~~ | **已消除**：v3 后 `x_outer` 恒 0.1458 > `x_inner` 最大 0.079（= `kBandXApex + 0.074`），横向区间不再可能为空。已记入 `docs/ui-design.md` §13.5 |
 | 3 | `docs/contract-change-procedure.md` 里的 13/13、6/6 | 三插件时代数字，两插件架构下已失意义（framework §十三 已注明），文档本身未改 |
 | 4 | UI-3c-2 的 5.6 项与实时 `ui3c2_live.cfg` 验证 | 属 UI-3c-2 收尾，与几何包无交集 |
-| 5 | `origin/master` 未 push | 本地已有 `05f65bc`、`2b26779`、`e630436` 等若干提交 |
+| 5 | ~~`origin/master` 未 push~~ | **已关闭**：v3 收尾已 push，`HEAD = origin/master = 3a35fff` 之后继续跟进 |
 
 ---
 

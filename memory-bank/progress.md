@@ -1,6 +1,6 @@
 # progress — 已完成、待办与已知问题
 
-> **最后更新**：2026-09-30 ｜ HEAD = `5a36773` ｜ 工作区干净 ｜ origin/master = `b0d2a0c`（ahead=1，收尾包待 push）
+> **最后更新**：2026-09-30 ｜ HEAD = origin/master（ahead=0 / behind=0）｜ 工作区干净（仅 `?? AGENTS.md`）｜ 具体 SHA 见 `git log -1`
 
 ## 1. 已完成
 
@@ -72,7 +72,6 @@ output-manager、recorder、ui-design、env-traps（E1–E6）。
 | # | 事项 | 优先级 | 归属 |
 |---|---|---|---|
 | 1 | **窄框 fixture**：构造 `narrow_box_scene.jsonl`，v2(`2b26779`)/v3(`05f65bc`) 双构建对比 trace，预期 SHA 不同 | **低**（已降级：`real_session_long` 497 翻转帧已提供端到端观测证据） | 可后置，单开 |
-| 2 | `docs/env-traps.md` 追加 E7/E8 | 中 | 单开一包 |
 | 5 | `docs/contract-change-procedure.md` 中 13/13、6/6 为三插件时代数字，与现状不符 | 低 | 待改 |
 | 6 | UI-3c-2 收尾项（5.6 验证、实时 `ui3c2_live.cfg` 观察） | 低 | UI 包 |
 
