@@ -63,7 +63,7 @@
 ### 1.6 文档
 
 `docs/` 下 11 份：framework、contract-change-procedure、stage3–7、
-output-manager、recorder、ui-design、env-traps（E1–E6）。
+output-manager、recorder、ui-design、env-traps（E1–E9）。
 
 ---
 
@@ -140,7 +140,7 @@ I1–I11 各 11 项 PASS、FAIL=0（`MH_SCRIPT_SEED=42`）。
 ## 5. 会话历史速览
 
 - 2026-09-23 ～ 09-29：187 个提交，从阶段 0 一路到 UI-3c-2 + 几何 v2。
-- 最近三笔：`e630436`（UI-3c-2 控制条）、`2b26779`（几何 v2 近端弧）、`05f65bc`（几何 v3 尖点五边形）。
+- 最近三笔：见 `git log -3 --oneline`。
 - 2026-09-30：攻击带几何 v3 入库（`05f65bc`），1/6 fixture SHA 变化，已解释为 v3 双向性
   （近端收紧 + 远端放宽，5 个 fixture 实测 0 翻转帧）。
 - 后续按 `AGENTS.md`：读 memory-bank → 出 Implementation Plan → 等确认 → 实施 → 回写。

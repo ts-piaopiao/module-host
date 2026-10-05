@@ -171,4 +171,25 @@ fatal: ambiguous argument 'dQA=': unknown revision or path not in the working tr
 
 ---
 
+## E9：浏览器访问 `localhost:6601` 返回 502（须用 `127.0.0.1`）
+
+**现象**：`core.exe` 起遥测服务器后，浏览器打开 `http://localhost:6601`
+反复返回 `502 Bad Gateway`；改用 `http://127.0.0.1:6601` 立即 200。
+
+**根因**：`telemetry_server.cpp` 用 `svr.listen("127.0.0.1", port)` 只绑 **IPv4**；
+`localhost` 在现代浏览器 / 系统里可能优先解析为 **IPv6 `::1`**，或经系统代理转发，
+落到无监听的 IPv6 回环或代理上，表现为 502。
+
+**首次踩坑**：`05f65bc` 之后的 UI 实测（2026-10-05），
+用于确认几何 v3 前端形状时触发。
+
+**规则**：
+
+- 访问遥测页面一律用 `http://127.0.0.1:6601`，不用 `localhost`。
+- 若必须支持 `localhost`，需把服务器改为同时绑 IPv4 + IPv6
+  （`svr.listen("0.0.0.0", port)` 或双栈）。
+- 文档 / 提示里写地址时明确写 `127.0.0.1`。
+
+---
+
 **文档完**。
