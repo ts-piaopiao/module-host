@@ -449,7 +449,7 @@ int main(int argc, char* argv[]) {
         LogPrintf("[内核] 遥测服务器启动失败（端口 6601 可能被占用），已禁用遥测\n");
         telemetry.reset();
     } else {
-        LogPrintf("[内核] 遥测服务器已启动: http://localhost:6601\n");
+        LogPrintf("[内核] 遥测服务器已启动: http://127.0.0.1:6601\n");
     }
 
     // --replay 模式：读 trace 并重放到遥测，不加载插件、不开串口、不进主循环。

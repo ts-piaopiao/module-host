@@ -53,7 +53,7 @@ experiments\script_replay\build\Release\script_replay.exe `
 
 ```powershell
 build\Release\core.exe --replay <trace.jsonl> --replay-speed 1.0
-# 浏览器打开 http://localhost:6601
+# 浏览器打开 http://127.0.0.1:6601
 ```
 
 `--replay` 模式**不加载插件、不开串口**，读 trace 重新发布到遥测后退出。

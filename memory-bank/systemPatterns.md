@@ -165,5 +165,5 @@ trace 输出（keys = active_key,desired_e,dets,facing,frame,me_fx,me_fy,
   再由 `run_acceptance.ps1` 逐场景跑并按关键词断言。
 - 独立探针（`experiments/` 下）用于**证明某条逻辑确实生效**，
   作为 fixture 无差异时的辅助证据。
-- 人眼确认：起 `core.exe` + 浏览器 `http://localhost:6601`，
+- 人眼确认：起 `core.exe` + 浏览器 `http://127.0.0.1:6601`，
   可用 canvas 像素级扫描量化验证（比截图更硬的证据）。
