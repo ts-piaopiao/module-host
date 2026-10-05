@@ -78,7 +78,7 @@ output-manager、recorder、ui-design、env-traps（E1–E9）。
 > 原待办 #4（`ui-design.md` L440–441「跳过 vs 夹取」措辞）已随 v3 删除：
 > 绘制步骤改为 5 顶点直连，`if (xOuter < BAND_X_MIN)` 夹取语句整段移除，分歧不复存在。
 
-### 窄框 fixture 构造条件（v2 时期判据，v3 下须重推——见 activeContext §3）
+### 窄框 fixture 构造条件（v2 时期判据，v3 下须重推——构造条件见本节下方，原理见 systemPatterns）
 
 > 以下四条为 **v2 时期**判据，v3 后近端收紧 + 远端放宽，分歧缝位置已变，
 > **不能直接沿用**；重推方法见 `activeContext.md` §3。

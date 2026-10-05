@@ -2,7 +2,7 @@
 
 > **更新最频繁**的文件。任务开始读它，任务结束写它。
 
-- **最后更新**：2026-09-30
+- **最后更新**：2026-10-05
 - **HEAD**：与 `origin/master` 一致（ahead=0 / behind=0）；具体 SHA 见 `git log -1`
 - **工作区**：干净（已跟踪文件）；`AGENTS.md` 为唯一未跟踪项
 - **origin/master**：与本地同步
@@ -19,12 +19,18 @@
 | 攻击带几何 v2（Commit 2，`2b26779`） | ✅ 完成，6 fixture SHA 不变已解释 |
 | 攻击带几何 v3（尖点 + 45° 斜边 + 远端竖直线，`05f65bc`） | ✅ 完成，1/6 fixture SHA 变化已解释 |
 | 窄框 fixture（v3 针对性回归，非唯一证据） | ⬜ 降级，可后置 |
-| `docs/env-traps.md` 追加 E7/E8 | ⬜ 单开一包，未开工 |
+| `docs/env-traps.md` 追加 E7/E8/E9 | ✅ 完成（`5a36773` / `c3cf698`） |
 | 方向 A：UI 文档对齐（D1–D5 + S3/S4 + E9） | ✅ 完成，`aebdb17` / `c3cf698` |
 
 ---
 
 ## 2. 近期变更
+
+### Commit `56010b3` + 本包 — 方向 A 残留收尾
+
+- `localhost:6601` 统一为 `127.0.0.1:6601`：`main.cpp` 启动日志 + 3 个 memory-bank 访问指引。
+- activeContext §1 表「E7/E8 未开工」→「E7/E8/E9 完成」；头部日期 09-30 → 10-05；§4 #5 去内嵌 SHA。
+- progress §2 窄框段交叉引用修正。
 
 ### Commit `c3cf698` / `aebdb17` — 方向 A 文档对齐
 
@@ -104,7 +110,7 @@
 |---|---|---|
 | 3 | `docs/contract-change-procedure.md` 里的 13/13、6/6 | 三插件时代数字，两插件架构下已失意义（framework §十三 已注明），文档本身未改 |
 | 4 | UI-3c-2 的 5.6 项与实时 `ui3c2_live.cfg` 验证 | 属 UI-3c-2 收尾，与几何包无交集 |
-| 5 | ~~`origin/master` 未 push~~ | **已关闭**：v3 收尾已 push，`HEAD = origin/master = 3a35fff` 之后继续跟进 |
+| 5 | ~~`origin/master` 未 push~~ | **已关闭**：v3 收尾已 push，之后持续推进 |
 
 ---
 
