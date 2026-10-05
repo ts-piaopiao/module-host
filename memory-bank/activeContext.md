@@ -20,10 +20,20 @@
 | 攻击带几何 v3（尖点 + 45° 斜边 + 远端竖直线，`05f65bc`） | ✅ 完成，1/6 fixture SHA 变化已解释 |
 | 窄框 fixture（v3 针对性回归，非唯一证据） | ⬜ 降级，可后置 |
 | `docs/env-traps.md` 追加 E7/E8 | ⬜ 单开一包，未开工 |
+| 方向 A：UI 文档对齐（D1–D5 + S3/S4 + E9） | ✅ 完成，`aebdb17` / `c3cf698` |
 
 ---
 
 ## 2. 近期变更
+
+### Commit `c3cf698` / `aebdb17` — 方向 A 文档对齐
+
+- `ui-design.md`：头部「未实现」→「已实现 UI-1c~UI-3c-2 + 几何 v3」；§二 N1 画面叠加标已实现；
+  §九加「实现变更记录」（UI-3 实际为 replay 控制，FileSource 顺延）；§十 localhost → 127.0.0.1；
+  §十二待办 2–5 标完成；§十三状态改已实现；§13.7 补 v3 常量名。
+- `env-traps.md`：新增 **E9**（`localhost:6601` 502，须用 `127.0.0.1`）。
+- `techContext.md` §4：索引 E1–E8 → E1–E9。
+- `progress.md`：env-traps 引用 E1–E6 → E1–E9；「最近三笔」语义化。
 
 ### Commit `05f65bc` — 攻击带几何 v3（尖点 + 45° 斜边 + 远端竖直线）
 
@@ -74,38 +84,17 @@
 
 ---
 
-## 3. 下一包：窄框 fixture（**已降级，可后置**）
+## 3. 下一包
 
-**降级理由**：原定位是「唯一能证明几何变更被端到端观测到的证据」（v2 时代 6 fixture
-三轮 SHA 全 SAME）。v3 入库后，`real_session_long` **已提供端到端观测证据**——
-497 翻转帧、3586/18404 行 trace 不同、锁定目标切换，SHA `9a3b6e19…` → `551f79b6…`。
-窄框 fixture 从「必需」降为「针对性回归」。
+**方向 A 已收口**。可选后续方向：
 
-**如仍要做，构造条件需在 v3 几何下重新推导**——原四条是按 v2「近端弧 + 反向带」写的，
-v3 后近端为 `x_inner(y) = 0.005 + |y|`、远端恒 0.1458，窄缝判据已不同，**不可直接照抄**：
-
-```text
-（v2 原条件，保留备查，v3 下须重推）
-1. cls=1、同平台 |d_fy| ≤ 0.028
-2. 窄框 w ≤ 0.015（约 ≤29px @1920）
-3. 位于角色正前方 x_far ∈ [0.005, 0.010)，且 x_far > w/2（保证 is_front=true）
-4. 反向带须为 false：需 w < x_far + 0.010（否则 in_band_any 恒真，无法分歧）
-5. 脚本处于 CHASE 且已锁定该目标 → need_move 翻转 → active_key 变化可被 trace 观测
-```
-
-> v3 下的分歧缝：目标须落在「v2 判定 ≠ v3 判定」的窄带内（近端收紧区或远端放宽区），
-> 且正反两带不能同时为真。现有 5 个 fixture 实测 **0 翻转帧**，即从未落进该缝。
-
-**验收方式（沿用）**：
-1. 构造 `experiments/script_replay/fixtures/narrow_box_scene.jsonl`
-2. 分别用 v2（`2b26779`）与 v3（`05f65bc`）构建 `script_replay.exe`
-3. 同 seed（`MH_SCRIPT_SEED=42`）跑该 fixture → **预期 SHA256 不同**
-4. commit fixture，并把新 SHA 记入 commit message
-
-> **坑**：fixture 输入只有原始检测事件（`h,id,type,w,cx,t,frame,cls,conf,cy`），
-> **不含 `me_locked`**。`script_replay.exe` 直接吃它走 `CppScript`，判定链正常；
-> 但若喂给 `core --replay`，会恒发布 `me_locked=0`，**前端画不出攻击区**。
-> 要在前端人眼看，得把 `script_replay` 产出的 **trace** 再喂给 `core --replay`。
+| 方向 | 内容 | 优先级 |
+|---|---|---|
+| B | UI 自动化验收脚本（`run_ui_acceptance.ps1`，纳入 run_all） | 中 |
+| C | UI-3c-2 实时模式验证（`ui3c2_live.cfg`）+ `127.0.0.1` 提示 | 低 |
+| D | UI-4 控制通道 `/ctl` 6602（契约已在 §六/§十四） | 中 |
+| E | FileSource 接本地 JSONL | 中 |
+| F | 改进 `core --replay` 直吃 fixture（现须先跑 `script_replay`） | 待评估 |
 
 ---
 
@@ -113,8 +102,6 @@ v3 后近端为 `x_inner(y) = 0.005 + |y|`、远端恒 0.1458，窄缝判据已�
 
 | # | 事项 | 说明 |
 |---|---|---|
-| ~~1~~ | ~~`docs/ui-design.md` L440–441 措辞~~ | **已关闭**：v3 绘制步骤改为 5 顶点直连，`if (xOuter < BAND_X_MIN)` 夹取语句整段删除，「跳过 vs 夹取」措辞分歧消失 |
-| ~~2~~ | ~~空带既有缺陷~~ | **已消除**：v3 后 `x_outer` 恒 0.1458 > `x_inner` 最大 0.079（= `kBandXApex + 0.074`），横向区间不再可能为空。已记入 `docs/ui-design.md` §13.5 |
 | 3 | `docs/contract-change-procedure.md` 里的 13/13、6/6 | 三插件时代数字，两插件架构下已失意义（framework §十三 已注明），文档本身未改 |
 | 4 | UI-3c-2 的 5.6 项与实时 `ui3c2_live.cfg` 验证 | 属 UI-3c-2 收尾，与几何包无交集 |
 | 5 | ~~`origin/master` 未 push~~ | **已关闭**：v3 收尾已 push，`HEAD = origin/master = 3a35fff` 之后继续跟进 |

@@ -254,7 +254,7 @@ class FileSource {   // 二期
 | **UI-0** | 本文档冻结 | 文档评审通过，契约定版 |
 | **UI-1a** | 修正本文档（5 处不符） | 文档 commit |
 | **UI-1b** | `ScriptHost::GetDebugInfo` 转发 + main.cpp 取得脚本状态 | run_all 全绿 + 6 fixture IDENTICAL |
-| **UI-1c** | cpp-httplib + telemetry 模块 + 前端 | 浏览器 `localhost:6601` 看到 state 变化 |
+| **UI-1c** | cpp-httplib + telemetry 模块 + 前端 | 浏览器 `127.0.0.1:6601` 看到 state 变化 |
 | **UI-2** | 画面叠加（检测框 / me / target / 攻击区，B1 抽象画布） | 见 §13 |
 | **UI-2a** | 设计文档 | 已冻结（本文档） |
 | **UI-2b** | 后端填 `dets` | 6 fixture IDENTICAL |
@@ -497,7 +497,7 @@ v3 入库后实测（seed=42，v2→v3）：
 - 6 fixture `run_script_acceptance.ps1` I1–I11 逐项结果
 - 人眼确认前端形状：**v3 未复验**（v2 时做过 canvas 像素级扫描；v3 的
   `drawBand` 为 5 顶点直连，形状由代码确定。如需视觉确认，起
-  `core.exe --replay <trace>` + 浏览器 `localhost:6601` 查看）
+  `core.exe --replay <trace>` + 浏览器 `127.0.0.1:6601` 查看）
 - 窄框 fixture：**已降级为针对性回归（非唯一证据）**。
   `real_session_long` 的 497 翻转帧已提供 v3 行为变更的端到端观测证据；
   窄框 fixture 如仍要做，须按 v3 几何重新推导分歧缝判据（见
